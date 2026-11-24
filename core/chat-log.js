@@ -6,16 +6,23 @@
 // container's /app/claude: GitHub #1120) keeps both in that folder, read from the process's environment. Codex keeps its rollout file open, so the
 // file is whatever rollout-*.jsonl its process (or a child) holds, skipping the rollouts of its own
 // subagents (the approval reviewer, "guardian", and spawned helpers: their session_meta's source is
-// {"subagent":…}), which the same process also holds open (GitHub #1201). Both are exact: no
-// guessing by folder or time, so two agents in one folder never get mixed up.
+// {"subagent":…}), which the same process also holds open (GitHub #1201). Antigravity (agy) holds its
+// conversation's presence lock open (<data>/presence/<id>.lock, beside <data>/conversations/<id>.db), so its
+// transcript is <data>/brain/<id>/.system_generated/logs/transcript.jsonl; before its first message it holds
+// none. All exact: no guessing by folder or time, so two agents in one folder never get mixed up.
 
-// Prints the log's path on the agent's machine, or nothing. Args: kind, pid. The processes under pid come
-// from one read of /proc, else one ps (macOS) (GitHub #1013: a pgrep per process read every process each
-// time).
+// Prints the log's path on the agent's machine, "pending" (its session has no log yet), or nothing. Args: kind,
+// pid, and for Antigravity its conversation id when its terminal's herdr.resume names one (read when its process
+// holds no lock). The processes under pid come from one read of /proc, else one ps (macOS) (GitHub #1013: a pgrep
+// per process read every process each time).
 import { codexQuestions } from "./asks.js";
 
 export const FIND = `
-kind="$1"; pid="$2"
+kind="$1"; pid="$2"; session="$3"
+# Antigravity's data folder for process $1: its own ANTIGRAVITY_CLI_DATA_DIR (or ANTIGRAVITY_APP_DATA_DIR), else the default.
+adir() { e=$(if [ -r "/proc/$1/environ" ]; then tr '\\000' '\\n' < "/proc/$1/environ" 2>/dev/null; elif [ ! -d /proc/self ]; then ps -wwE -o command= -p "$1" 2>/dev/null | tr ' ' '\\n'; fi); d=$(echo "$e" | sed -n 's/^ANTIGRAVITY_CLI_DATA_DIR=//p' | head -n 1); [ -n "$d" ] || d=$(echo "$e" | sed -n 's/^ANTIGRAVITY_APP_DATA_DIR=//p' | head -n 1); echo "\${d:-$HOME/.gemini/antigravity-cli}"; }
+# The files process $1 holds open.
+held() { if [ -d "/proc/$1/fd" ]; then for d in /proc/$1/fd/*; do readlink "$d"; done 2>/dev/null; else lsof -p "$1" -Fn 2>/dev/null | sed -n 's/^n//p'; fi; }
 procs() { if [ -r /proc/self/stat ]; then cat /proc/[0-9]*/stat 2>/dev/null | awk '{ p = $1; sub(/.*\\) /, ""); print p, $2 }'; else ps -axo pid=,ppid= 2>/dev/null; fi; }
 # The first open rollout that is not a subagent's: its first line (session_meta) names the source.
 main() { while IFS= read -r r; do head -n 1 "$r" 2>/dev/null | grep -q '"source":{"subagent"' || { echo "$r"; return; }; done; }
@@ -32,6 +39,14 @@ for p in "$pid" $(kids "$pid"); do
     [ -n "$id" ] || continue
     for f in "$c"/projects/*/"$id".jsonl; do [ -f "$f" ] && { echo "$f"; exit 0; }; done
     echo "pending"; exit 0
+  elif [ "$kind" = antigravity ]; then
+    # the conversations its process holds (its presence lock, its database); the one written last, when several
+    hit=$(held "$p" | grep -E '/(presence|conversations)/[0-9a-fA-F-]{36}\\.(lock|db)$')
+    [ -n "$hit" ] || continue
+    base=$(echo "$hit" | head -n 1); base=\${base%/*}; base=\${base%/*}
+    l=$(for id in $(echo "$hit" | sed 's|.*/||; s|\\.[a-z]*$||' | sort -u); do t="$base/brain/$id/.system_generated/logs/transcript.jsonl"; [ -f "$t" ] && echo "$t"; done)
+    [ -n "$l" ] && { ls -t $l 2>/dev/null | head -n 1; exit 0; }
+    echo "pending"; exit 0
   else
     if [ -d "/proc/$p/fd" ]; then
       f=$(for d in /proc/$p/fd/*; do readlink "$d"; done 2>/dev/null | grep '/rollout-.*\\.jsonl$' | main)
@@ -41,6 +56,10 @@ for p in "$pid" $(kids "$pid"); do
     [ -n "$f" ] && { echo "$f"; exit 0; }
   fi
 done
+# an Antigravity whose process holds no conversation now: the one its terminal's record names, when it has a log
+if [ "$kind" = antigravity ] && [ -n "$session" ]; then
+  case $session in *[!0-9a-fA-F-]*) ;; *) t="$(adir "$pid")/brain/$session/.system_generated/logs/transcript.jsonl"; [ -f "$t" ] && echo "$t" ;; esac
+fi
 true`;
 
 // Reads a log on the agent's machine, sending back only what the chat shows. Each kept line
@@ -65,6 +84,41 @@ BEGIN { pos = base; first = base; msgs = 0 }
   if (NR == 1 && skip) { first = pos; next }
   line = $0
   head = substr(line, 1, 400)
+  # Antigravity: a step a line ({"step_index":N,"source":…,"type":…}). A tool result (GENERIC) answers the calls of
+  # the step before it in order, and goes as G "<status>[ TASK=<background task>][ M=<picture uri>]…" (its words stay
+  # in the file, read when its row opens); a background task that ended (a SYSTEM_MESSAGE) as N "- <task> <how>".
+  if (substr(head, 1, 14) == "{\"step_index\":") {
+    if (index(head, "\"type\":\"GENERIC\"")) {
+      if (count) next
+      g = "-"
+      if (match(head, /"status":"[A-Z_]+"/)) g = substr(head, RSTART + 10, RLENGTH - 11)
+      if (match(line, /background task with task id: [^\\" ]+/)) g = g " TASK=" substr(line, RSTART + 30, RLENGTH - 30)
+      t = line
+      while (match(t, /"uri":"[^"]*"/)) { g = g " M=" substr(t, RSTART + 7, RLENGTH - 8); t = substr(t, RSTART + RLENGTH) }
+      print off "\tG\t" g
+      # what a send to another agent came back with, a question answered, an error: read whole
+      if (length(line) <= 65536 && (index(line, "elivered") || index(line, ": sent to ") || index(line, "\\nA1: ") || index(head, "\"status\":\"ERROR\""))) print off "\tJ\t" line
+      next
+    }
+    if (index(head, "\"type\":\"SYSTEM_MESSAGE\"")) {
+      if (count) next
+      if (match(line, /Task id \\"[^\\"]+\\" [a-z]+/)) { m = substr(line, RSTART + 10, RLENGTH - 10); k = m; sub(/\\".*/, "", k); st = m; sub(/.*\\" /, "", st); print off "\tN\t- " k " " st }
+      next
+    }
+    if (!index(head, "\"type\":\"USER_INPUT\"") && !index(head, "\"type\":\"PLANNER_RESPONSE\"") && !index(head, "\"type\":\"ERROR_MESSAGE\"") && !index(head, "\"type\":\"SHELL_EXEC\"")) next
+    if (index(head, "\"type\":\"SHELL_EXEC\"") && index(head, "\"status\":\"RUNNING\"")) next
+    if (index(head, "\"type\":\"USER_INPUT\"") || index(line, "\"content\":\"")) msgs++
+    if (count) next
+    if (length(line) > 262144) {
+      # too big to send: its calls by name, so their results still answer them
+      nm = ""; t = line
+      if (index(head, "\"type\":\"PLANNER_RESPONSE\"")) while (match(t, /\{"name":"[^"]*","args"/)) { nm = nm "\037" substr(t, RSTART + 9, RLENGTH - 17); t = substr(t, RSTART + RLENGTH) }
+      print off "\tA\t" nm
+      next
+    }
+    print off "\tJ\t" line
+    next
+  }
   claude = index(head, "\"isSidechain\":false") && index(line, "\"type\":\"user\",\"message\"")
   codex = index(head, "\"type\":\"response_item\"")
   # A background job (a shell, a watcher, a helper) that ended: Claude Code notes it the moment it
@@ -595,6 +649,94 @@ function codexStep(name, args) {
   return { kind: "tool", line: `Used ${name}`, doing: `Using ${name}` };
 }
 
+// ---- Antigravity (agy) -----------------------------------------------------------------------------------------
+// Its transcript writes each call argument as a JSON-encoded string ({"Path":"\"/a/b.ts\"","StartLine":"10"}), cut
+// at about 2 KB with "\n<truncated N bytes>": the values as they were.
+export function agyArgs(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v !== "string") { out[k] = v; continue; }
+    const p = /^(?:"[\s\S]*"|\{[\s\S]*\}|\[[\s\S]*\]|true|false|null|-?\d+(?:\.\d+)?)$/.test(v) ? parse(v) : null;
+    if (p !== null) { out[k] = p; continue; }
+    const cut = /\n<truncated \d+ bytes>$/.exec(v);
+    out[k] = v.startsWith('"') && cut ? (parse(`"${v.slice(1, cut.index).replace(/\\+$/, (b) => (b.length % 2 ? b.slice(0, -1) : b))}"`) ?? v.slice(1, cut.index)) : v;
+  }
+  return out;
+}
+
+// What the person typed in a USER_INPUT step: inside <USER_REQUEST>, without agy's own tags after it.
+export function agyUserText(content) {
+  const c = String(content ?? "");
+  const m = /<USER_REQUEST>\r?\n?([\s\S]*?)\r?\n?<\/USER_REQUEST>/.exec(c);
+  if (m) return m[1].trim();
+  return c.replace(/\n*<(ADDITIONAL_METADATA|USER_SETTINGS_CHANGE|SYSTEM_MESSAGE)>[\s\S]*?<\/\1>/g, "").trim();
+}
+
+// A tool's output without agy's "Created At:" / "Completed At:" lines over it.
+const agyOut = (s) => {
+  const lines = String(s ?? "").replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length && /^(?:Created|Completed) At:\s+\d{4}-\d{2}-\d{2}T/.test(lines[i])) i++;
+  return lines.slice(i).join("\n");
+};
+
+// ask_question's questions ([{ question, options: [label], is_multi_select }]) as the chat's: [{ text, header, multi,
+// choices: [{ label }] }].
+export function agyQuestions(raw) {
+  let a = raw;
+  if (typeof a === "string") a = parse(a);
+  return (Array.isArray(a) ? a : []).map((q) => ({ text: String(q?.question ?? ""), header: "", multi: q?.is_multi_select === true,
+    choices: (Array.isArray(q?.options) ? q.options : []).map((o) => ({ label: String(typeof o === "string" ? o : o?.label ?? "") })).filter((o) => o.label) })).filter((q) => q.text);
+}
+
+// A picture a step made ("file:///…/step_2_media_0.png"): its path, else null.
+const agyFile = (uri) => {
+  const u = String(uri ?? "");
+  if (u.startsWith("/")) return u;
+  if (!u.startsWith("file://")) return null;
+  try { return decodeURIComponent(u.slice(7)); } catch { return u.slice(7); }
+};
+
+function agyStep(name, a = {}) {
+  const path = a.Path ?? a.AbsolutePath ?? a.TargetFile ?? a.path ?? a.DirectoryPath ?? "";
+  // (a step too big to read whole: its calls' names alone)
+  const file = (p) => (p ? short(p) : "a file"), name1 = (p) => (p ? base(p) : "a file");
+  switch (name) {
+    case "run_command": {
+      const cmd = String(a.CommandLine ?? a.command ?? a.toolSummary ?? "");
+      const wait = waitWords(cmd);
+      const shell = { kind: "shell", label: cmdWords(cmd), cmd };
+      return { kind: "run", line: `Ran ${clip(cmd, 80)}`, doing: wait ?? `Running ${cmdWords(cmd)}`, waiting: Boolean(wait), shell };
+    }
+    case "read_file": case "view_file": return { kind: "read", line: `Read ${file(path)}`, doing: `Reading ${name1(path)}` };
+    case "edit_file": case "replace_file_content": case "multi_replace_file_content":
+      return { kind: "edit", line: `Edited ${file(path)}`, doing: `Editing ${name1(path)}` };
+    case "write_file": case "write_to_file": return { kind: "edit", line: `Wrote ${file(path)}`, doing: `Writing ${name1(path)}` };
+    case "grep_search": return { kind: "search", line: `Searched for “${clip(a.Query ?? a.query, 50)}”`, doing: `Searching for “${clip(a.Query ?? a.query, 40)}”` };
+    case "find_by_name": return { kind: "search", line: `Looked for ${clip(a.Pattern ?? a.pattern, 60)}`, doing: `Looking for ${clip(a.Pattern ?? a.pattern, 40)}` };
+    case "list_dir": return { kind: "search", line: `Looked in ${file(path)}`, doing: `Looking in ${name1(path)}` };
+    case "search_web": return { kind: "web", line: `Searched the web for “${clip(a.query ?? a.Query, 60)}”`, doing: `Searching the web for “${clip(a.query ?? a.Query, 40)}”` };
+    case "read_url": case "read_url_content": return { kind: "web", line: `Opened ${clip(a.Url ?? a.url, 80)}`, doing: `Reading ${host(a.Url ?? a.url)}` };
+    case "invoke_subagent": {
+      const what = clip(a.Role ?? a.Prompt ?? a.TypeName ?? "a helper", 60);
+      return { kind: "agent", line: `Asked a helper: ${clip(a.Role ?? a.Prompt ?? "", 70)}`, doing: `Waiting for helper: ${what}`, waiting: true, spawn: what };
+    }
+    case "manage_subagents": return { kind: "agent", line: "Checked its helpers", doing: "Checking its helpers" };
+    case "update_steps": {
+      const steps = Array.isArray(a.steps) ? a.steps : [];
+      const now = steps.find((s) => /progress|doing|running/i.test(String(s?.status ?? ""))) ?? steps.find((s) => s?.status !== "done");
+      return { kind: "plan", line: "Updated its plan", doing: clip(now?.title, 60) || "Planning" };
+    }
+    case "manage_task": return { kind: "tool", line: `Checked a background task`, doing: "Checking a background task" };
+    case "send_message": return { kind: "tool", line: `Sent a message${a.Recipient ? ` to ${clip(a.Recipient, 40)}` : ""}`, doing: "Sending a message" };
+    case "schedule": return { kind: "tool", line: "Set a timer", doing: "Waiting", waiting: true };
+  }
+  const mcp = /^mcp_([^_]+)_(.+)$/.exec(name);
+  if (mcp) return { kind: "tool", line: `Used ${mcp[1]}: ${mcp[2]}`, doing: `${mcp[2].replace(/[_-]+/g, " ")} (${mcp[1]})` };
+  return { kind: "tool", line: `Used ${name}`, doing: a.toolSummary ? clip(a.toolSummary, 60) : `Using ${name}` };
+}
+
 // The conversation in one log, built from LOG's records ({ off, kind, data }) in file order.
 // Items (ids come from byte offsets, so they stay the same when earlier pages are added):
 //   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at, suggests? }
@@ -664,6 +806,10 @@ export class Conversation {
     // Claude Code's queue of what was typed while it works, in order: { id, raw, at, text?,
     // images? } (text only for the person's words; a job's end has a place too).
     this.queue = [];
+    // Antigravity's calls not answered yet, in the order their results come (its results name no call), and the last
+    // result's { off, id }, which its whole line (read next, when it says more) belongs to.
+    this.agyCalls = [];
+    this.agyLast = null;
   }
 
   push(item) {
@@ -954,6 +1100,16 @@ export class Conversation {
         this.ended(id ?? null, task ?? null);
         continue;
       }
+      if (r.kind === "G") { this.agyResult(r.off, r.data); continue; }
+      if (r.kind === "A") {
+        // an Antigravity step too big to send: its calls by name, so their results still answer them
+        r.data.split("\x1f").filter(Boolean).forEach((name, i) => {
+          const id = `g${r.off}:${i}`;
+          this.step(id, r.off, agyStep(name, {}));
+          this.agyCalls.push(id);
+        });
+        continue;
+      }
       if (r.kind === "T") {
         // A call too big to send whole: its name and small fields ("file_path=…").
         const [name, ...all] = r.data.split("\x1f");
@@ -965,7 +1121,7 @@ export class Conversation {
       }
       const l = parse(r.data);
       if (!l || typeof l !== "object") continue;
-      if (this.kind === "codex") this.codex(l, r.off); else this.claude(l, r.off);
+      if (this.kind === "codex") this.codex(l, r.off); else if (this.kind === "antigravity") this.agy(l, r.off); else this.claude(l, r.off);
     }
   }
 
@@ -1123,12 +1279,118 @@ export class Conversation {
       const i = p.info ?? {};
       const used = i.last_token_usage?.total_tokens;
       this.meta = { ...this.meta, used: used ?? this.meta.used, window: i.model_context_window ?? this.meta.window };
-    } else if (p.type === "task_complete" || p.type === "turn_aborted") {
-      for (const h of this.helpers.values()) if (h.untilTurn) h.done = true;
-      this.open.clear();
-      this.waits.clear();
-      this.waiting = false;
+    } else if (p.type === "task_complete" || p.type === "turn_aborted") this.turnOver();
+  }
+
+  // Its turn is over: nothing it called runs now (Codex's helpers end with it).
+  turnOver() {
+    for (const h of this.helpers.values()) if (h.untilTurn) h.done = true;
+    this.open.clear();
+    this.waits.clear();
+    this.waiting = false;
+    this.doing = null;
+  }
+
+  // An Antigravity tool result (LOG's G record: "<status>[ TASK=<task>][ M=<uri>]…"): it answers the oldest call not
+  // answered yet. RUNNING: the call goes on as a background task, which a SYSTEM_MESSAGE ends (an N record). Pictures
+  // it made (a screenshot) show as the agent's, under its row.
+  agyResult(off, data) {
+    const [status, ...rest] = String(data).split(" ");
+    const id = this.agyCalls.shift() ?? null;
+    this.agyLast = { off, id };
+    if (id) {
+      const task = rest.find((x) => x.startsWith("TASK="))?.slice(5);
+      if (status === "RUNNING" && task) this.backgrounded(id, task);
+      const q = this.questions.get(id);
+      if (q) q.closed = status === "DONE" ? "answered" : "dismissed";
+      for (const x of this.sentBy.get(id) ?? []) if (!x.state) x.state = status === "ERROR" ? "failed" : "delivered";
+      const h = this.helpers.get(id);
+      if (h && !h.untilTurn) h.done = true;
+      this.done(id, off);
+    }
+    const files = rest.filter((x) => x.startsWith("M=")).map((x) => agyFile(x.slice(2))).filter(Boolean);
+    if (files.length) this.push({ kind: "agent", id: `m${off}`, text: files.map((f) => `![${base(f)}](${f})`).join("\n\n"), at: this.agyAt ?? 0, made: true });
+  }
+
+  agy(l, off) {
+    const at = time(l.created_at);
+    this.agyAt = at;
+    if (l.type === "USER_INPUT") {
+      // a new message: every earlier call has had its answer
+      this.agyCalls = [];
+      const text = agyUserText(l.content);
+      const paths = (Array.isArray(l.media) ? l.media : []).map((m) => agyFile(m?.uri)).filter(Boolean);
+      const u = text ? cleanUser(text) : null;
+      if (!u && !paths.length) return;
+      this.user(`u${off}`, { ...(u ?? { text: "" }), images: paths.length, at });
+      const last = this.items[this.items.length - 1];
+      if (paths.length && last?.id === `u${off}`) last.paths = paths;
+    } else if (l.type === "PLANNER_RESPONSE") {
+      this.agyCalls = [];
+      if (typeof l.model === "string" && l.model) {
+        const used = (l.input_tokens ?? 0) + (l.cache_read_tokens ?? 0) + (l.output_tokens ?? 0);
+        const effort = /-(low|medium|high|xhigh|max)$/.exec(l.model)?.[1];
+        this.meta = { ...this.meta, model: l.model, ...(effort ? { effort } : {}), used: used || this.meta.used, at };
+      }
+      const said = typeof l.content === "string" ? this.agentText(l.content) : "";
+      if (said) this.push({ kind: "agent", id: `a${off}`, text: said, at, ...this.takeSuggest() });
+      const calls = (Array.isArray(l.tool_calls) ? l.tool_calls : []).filter((c) => c && typeof c === "object");
+      calls.forEach((c, i) => {
+        const id = `g${l.step_index ?? off}:${i}`, name = String(c.name ?? "tool"), a = agyArgs(c.args);
+        this.agyCalls.push(id);
+        if (name === "ask_question") {
+          // its own question: answered on its screen (a card, service/agy-asks.ts), shown here as asked
+          const questions = agyQuestions(a.questions);
+          const text = questions.map((q) => q.text).join("\n\n");
+          if (text) this.asked(id, { kind: "ask", id: `q${off}:${i}`, text, questions, at });
+          this.open.set(id, "Asking you something");
+          this.doing = "Asking you something";
+          return;
+        }
+        const st = agyStep(name, a);
+        st.at = at || Date.now();
+        if (st.spawn) this.helpers.set(id, { desc: st.spawn, done: false, at });
+        this.step(id, off, st, st.spawn ? id : null);
+        const cmd = name === "run_command" ? String(a.CommandLine ?? a.command ?? "") : "";
+        if (cmd && ARTIFACT.test(cmd)) this.push({ kind: "artifact", id: `art${off}:${i}`, at });
+        if (cmd) this.sent(cmd, `${off}:${i}`, at, id);
+      });
+      // a reply with no call ends its turn
+      if (!calls.length) this.turnOver();
+      else if (typeof l.thinking === "string" && l.thinking.trim() && !this.open.size) this.doing = "Thinking";
+    } else if (l.type === "GENERIC") {
+      // the whole line of the result just read (agyResult): whether a send got there, what was answered in words
+      const id = this.agyLast?.off === off ? this.agyLast.id : null;
+      if (!id) return;
+      const words = agyOut(l.content), failed = l.status === "ERROR";
+      this.delivery(id, failed ? [l.error, words].filter(Boolean).join("\n") : words, failed);
+      const q = this.questions.get(id);
+      if (q?.questions?.length && !failed) {
+        // an answer written in (not one of its options) is the person's message, as Claude Code's
+        // (several picked: joined with ", ")
+        const picked = (i, w) => {
+          const labels = (q.questions[i]?.choices ?? []).flatMap((o) => [o.label, o.label.replace(/^\(recommended\)\s*/i, "")]);
+          return labels.includes(w) || (q.questions[i]?.multi === true && w.split(/,\s*/).every((x) => labels.includes(x)));
+        };
+        const all = [...words.matchAll(/^A(\d+): (.+)$/gm)].map((m) => [Number(m[1]) - 1, m[2].trim()]);
+        // Esc on its dialog: "User Skipped" (a message from the chat went past it)
+        const skipped = ([, w]) => w === "User Skipped";
+        if (all.length && all.every(skipped)) q.closed = "dismissed";
+        const said = all.filter(([i, w]) => w && !skipped([i, w]) && !picked(i, w)).map(([, w]) => w);
+        if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
+      }
+    } else if (l.type === "SHELL_EXEC") {
+      // a `!` command the person ran in its terminal (a version that logs it): theirs, and its output under it
+      const cmd = String(l.command ?? "").trim();
+      if (!cmd) return;
+      this.user(`u${off}`, { text: `!${cmd}`, at });
+      const id = `x${off}`;
+      this.step(id, off, { kind: "run", line: `Ran ${clip(cmd, 80)}`, doing: `Running ${cmdWords(cmd)}` });
+      this.done(id, off);
       this.doing = null;
+    } else if (l.type === "ERROR_MESSAGE") {
+      const err = String(l.error ?? "").trim();
+      if (err) this.push({ kind: "error", id: `e${off}`, text: err, at });
     }
   }
 }
@@ -1162,10 +1424,15 @@ export function resultText(line, id) {
     }
     const o = l.payload?.output;
     if (text === null && o !== undefined) text = typeof o === "string" ? o : String(o?.output ?? o?.content ?? JSON.stringify(o));
+    // Antigravity's: a tool's result (its words under its times), or a `!` command's output
+    if (text === null && typeof l.step_index === "number") {
+      text = l.type === "SHELL_EXEC" ? [l.output ?? l.content, l.error ?? l.error_message].filter((x) => typeof x === "string" && x.trim()).join("\n")
+        : [agyOut(l.content), l.error].filter((x) => typeof x === "string" && x.trim()).join("\n");
+    }
   } else {
     // Cut short: take the first string after its content key, up to the cut.
     const m = /"(?:content|text|output)":"((?:[^"\\]|\\.)*)/.exec(line);
-    if (m) { try { text = JSON.parse(`"${m[1].replace(/\\[^"]{0,5}$/, "")}"`); } catch { text = m[1]; } }
+    if (m) { try { text = agyOut(JSON.parse(`"${m[1].replace(/\\[^"]{0,5}$/, "")}"`)); } catch { text = m[1]; } }
   }
   if (text === null) return null;
   const rows = String(text).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split("\n");

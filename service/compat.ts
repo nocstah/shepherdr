@@ -18,10 +18,12 @@ import { mentionedIn } from "../core/send.js";
 import * as MEc from "../core/mentions.js";
 import * as SCc from "../core/screens.js";
 import { codexChoice } from "../core/asks.js";
+import { bangsOf } from "./agy-bang.ts";
+import { agyQuestion, endWords as agyEndWords } from "./agy-asks.ts";
 const { SCREEN } = SCc as any;
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-const CLI_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
+const CLI_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 import * as MNc from "../core/menus.js";
 const { machineLabel } = MNc as any;
 import { HOME, appHome } from "./paths.ts";
@@ -85,6 +87,9 @@ const stepRow = (s: any, i: number) => ({ key: `${s.id ?? i}`, kind: STEP[s.kind
 /** A tools row opened (GET api/activity?chat&what=turn&id): each step's line and what it printed, read from the log
  *  only now, as the window's open row (mods/chat loadResults). */
 export async function activity(reader: any, id: string): Promise<ActivityAnswer> {
+  // a `!` command sent to Antigravity from the chat (service/agy-bang.ts): what its screen showed it print
+  const bang = id.startsWith("bang:") ? bangsOf(String(reader?.addr ?? "")).find((b) => b.id === id) : null;
+  if (bang) return { steps: [{ id, kind: "run", tool: "run", at: 0, end: 1, title: `Ran ${bang.cmd}`, doing: `Ran ${bang.cmd}`, target: "", ...(bang.out !== undefined ? { out: bang.out || "(no output)" } : {}) }] } as ActivityAnswer;
   const x = (reader?.conv?.items ?? []).find((i: any) => i.id === id && i.kind === "tools");
   if (!x) return { error: "That turn isn't in the chat any more." };
   // (a call that only sent a message is that message's own row: not here)
@@ -585,7 +590,8 @@ export class Compat {
     const own = this.chats.get(key);
     // what pages sent it, known again in the log: the page's id comes back on it
     const sends = (own && this.sends.get(own)) || [], takenSends = new Set<string>();
-    const asking = !!own && (this.asks?.of(own) ?? []).some((a: any) => a.words?.kind === "questions");
+    // (Antigravity's: its ask_question dialog on its screen, a card of its own: service/agy-asks.ts)
+    const asking = !!own && ((this.asks?.of(own) ?? []).some((a: any) => a.words?.kind === "questions") || (this as any).watch?.agy?.open(own)?.prompt?.kind === "question");
     // Codex's own questions (request_user_input) waiting on its screen: a card that answers them there (SHEP-91), at
     // the end, in place of its "Asked you" box
     const codexAsk = reader.kind === "codex" && t?.status?.state === "blocked"
@@ -715,6 +721,13 @@ export class Compat {
     }
     // what the agent asks now, as cards where they were asked (placeByTime below)
     const cardsFrom = messages.length;
+    // the `!` commands sent to Antigravity from here (agy writes none to its log: service/agy-bang.ts), each the
+    // person's message, then a row with what it printed, where they were sent; one its log has (SHELL_EXEC) shows once
+    for (const b of addr && reader.kind === "antigravity" ? bangsOf(addr) : []) {
+      if (items.some((x: any) => x.kind === "user" && x.at >= b.at - 60_000 && String(x.text ?? "").replace(/^!\s*/, "") === b.cmd)) continue;
+      messages.push({ id: `${b.id}:u`, who: "you", text: `!${b.cmd}`, at: b.at, ...(b.cid ? { cid: b.cid } : {}) } as Message);
+      messages.push({ id: b.id, who: "agent", at: b.at + 1, activity: { id: b.id, at: b.at, end: b.at, rows: [{ key: b.id, kind: "run", text: `Ran ${b.cmd}`, steps: [b.id] }], steps: 1, summary: "Ran a command" } });
+    }
     for (const a of addr ? this.asks?.of(addr) ?? [] : []) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: this.question(a, key) });
     if (codexCard) messages.push({ id: `ask:cq:${codexCard.id}`, who: "agent", at: codexCard.at ?? Date.now(), question: codexQuestion(codexCard, key) });
     for (const a of (this.secrets?.asks() ?? []).filter((x) => x.address === addr)) messages.push({ id: `secret:${a.address}:${a.name}`, who: "agent", at: this.askedAt(`secret:${a.address}:${a.name}`), secret: this.secretAsk(a) } as Message);
@@ -728,6 +741,11 @@ export class Compat {
       for (const c of watch?.cardsOf?.(who) ?? []) {
         if (c.state === "open") messages.push({ id: `card:${c.id}`, who: "agent", at: c.opened, question: this.screenQuestion(c, key, by) });
         else messages.push(quiet(`se:${c.id}`, c.opened, `${ref ? `${ref} · ` : ""}${SCREEN.ended(c.cli, c.how)}`));
+      }
+      // Antigravity's own asks (service/agy-asks.ts): the one on its screen now as its card, the rest how they went
+      for (const c of watch?.agy?.of?.(who) ?? []) {
+        if (c.state === "open") messages.push({ id: `card:${c.id}`, who: "agent", at: c.at, question: agyQuestion(c, key, by) });
+        else messages.push(quiet(`ag:${c.id}`, c.at, `${ref ? `${ref} · ` : ""}${agyEndWords(c)}`));
       }
     };
     if (addr) screens(addr, null);
@@ -754,7 +772,7 @@ export class Compat {
       // (one that ended keeps its row a while, done, but no longer opens: its log is found by its running process)
       ...kids.map((s: any) => ({ id: `c:${s.address}`, kind: "child" as const, title: s.title, at: s.at, ...(s.ended ? {} : { chat: `t:${s.address}` }), status: s.status, role: s.role, ...(s.cli ? { cli: s.cli } : {}), ...(s.ended ? { ended: s.ended } : {}) })),
       ...(reader.conv?.running?.() ?? []).map((h: any, i: number) => ({ id: `h${i}`, kind: "agent" as const, title: h.desc, at: h.at ?? Date.now() })),
-      ...(reader.jobs?.() ?? []).map((j: any) => ({ id: `b:${j.id}`, kind: j.kind === "monitor" ? "monitor" as const : "shell" as const, title: j.label, at: j.at ?? Date.now(), command: j.cmd, stop: true, ...(j.path ? { more: "output" as const } : {}) })),
+      ...(reader.jobs?.() ?? []).map((j: any) => ({ id: `b:${j.id}`, kind: j.kind === "monitor" ? "monitor" as const : "shell" as const, title: j.label, at: j.at ?? Date.now(), command: j.cmd, stop: reader.kind !== "antigravity", ...(j.path ? { more: "output" as const } : {}) })),
     ];
     // what it runs on, for the line under the box (core/agents.js: the window's model button says the same)
     let agent: any;
@@ -781,6 +799,6 @@ export class Compat {
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;
     const failed = failedOf(addr);
-    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
+    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" || reader.kind === "antigravity" ? reader.kind : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
   }
 }

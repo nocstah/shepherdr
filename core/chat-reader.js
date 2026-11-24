@@ -56,7 +56,7 @@ export class ChatReader {
       // The agent's last recorded log is still readable when a page opens after it stopped.
       let saved = null;
       try { saved = JSON.parse(t.labels?.["herdr.resume"] || "null"); } catch {}
-      if (typeof saved?.log === "string" && saved.log.startsWith("/") && ["claude", "codex"].includes(saved.kind)) {
+      if (typeof saved?.log === "string" && saved.log.startsWith("/") && ["claude", "codex", "antigravity"].includes(saved.kind)) {
         this.fixed(saved.log, saved.kind);
         return true;
       }
@@ -65,7 +65,10 @@ export class ChatReader {
     const pid = t?.foreground?.pid;
     if (!kind || !pid) { const was = this.state; if (was !== "none") { this.reset(); this.state = "none"; } return was !== "none"; }
     if (this.path && this.kind === kind && this.pid === pid) return false;
-    const f = await this.io.sh(FIND, ["chat", kind, String(pid)], this.machine);
+    // Antigravity's conversation as its terminal's record names it (herdr.resume), for when its process holds none
+    let session = "";
+    if (kind === "antigravity") { try { const r = JSON.parse(t.labels?.["herdr.resume"] || "null"); if (r?.kind === "antigravity" && typeof r.session === "string") session = r.session; } catch {} }
+    const f = await this.io.sh(FIND, ["chat", kind, String(pid), ...(session ? [session] : [])], this.machine);
     let path = String(f.stdout ?? "").trim().split("\n").pop() ?? "";
     // Not in its session yet (no report, no turn): perhaps on its CLI's own start screen (Codex's "Update available",
     // "Hooks need review", trust this folder), which shows as a card under an empty chat, as the window's chat has it
@@ -74,6 +77,9 @@ export class ChatReader {
     // Codex opens its log with its first message: past those screens and idle, with no message yet, it has none.
     // Still an empty chat (the first message can be typed here), until it has worked a turn with no log to show.
     if (!path && kind === "codex" && t?.state === "live" && !((t.turn ?? 0) > 1) && (t.status?.state ?? "idle") !== "blocked") path = "pending";
+    // Antigravity opens its conversation with its first message too; its start screens (trust this folder) are dialogs
+    // its card shows under the empty chat (service/agy-asks.ts)
+    if (!path && kind === "antigravity" && t?.state === "live" && !((t.turn ?? 0) > 1)) path = "pending";
     if (path === "pending" || !path) {
       const was = this.state;
       this.reset();

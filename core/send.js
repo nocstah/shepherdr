@@ -267,11 +267,11 @@ export const STUCK = "It's still in the agent's message box: its Enter didn't ta
 // The person's reaction to a message, as the agent reads it (on: added, else removed).
 export const reactionLine = (emoji, text, on = true) => `<hc from="person" ${on ? "reaction" : "reaction-removed"}="${emoji}" to="${excerpt(text)}"/>`;
 
-// Sends the body. kind: "claude", "codex" or another CLI. -> hc's result (code 0: it's in the agent's terminal).
-// again: its last send stayed in Claude Code's box (sendTyped).
+// Sends the body. kind: "claude", "codex", "antigravity" or another CLI. -> hc's result (code 0: it's in the agent's
+// terminal). again: its last send stayed in Claude Code's box (sendTyped).
 export async function sendBody(io, addr, kind, body, again = false) {
   let r = await sendTyped(io, addr, kind, body, SETTLE, again);
-  if (r.code !== 0 && refusal(r).kind === "blocked" && (kind === "claude" || kind === "codex")) r = await replyInstead(io, addr, body);
+  if (r.code !== 0 && refusal(r).kind === "blocked" && (kind === "claude" || kind === "codex" || kind === "antigravity")) r = await replyInstead(io, addr, body);
   if (r.code === 0 && kind === "claude") await steerNow(io, addr, STEER, body);
   return r;
 }

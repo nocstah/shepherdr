@@ -134,6 +134,8 @@ export class BgJobs {
 
   // Stops a job (one of list()'s). Its CLI then tells the agent it ended, as when it stops one itself.
   async stop(run, kind, pid, job) {
+    // (Antigravity's background tasks are its own to stop: none from here)
+    if (kind === "antigravity") return false;
     const what = kind === "codex" ? job?.pid : job?.task;
     if (!what) return false;
     await run(JOBS, ["jobs", "stop", kind, String(pid), String(what)]);
