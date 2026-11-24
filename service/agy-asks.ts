@@ -22,8 +22,12 @@ const recommended = (r: any) => /^\(recommended\)/i.test(String(r?.label ?? ""))
 /** The agent a card's id names ("agy:<address>:<n>"). */
 export const cardAddr = (id: string) => String(id).slice(4, String(id).lastIndexOf(":"));
 
-/** What a closed card says: "Run this command? · Allowed in the chat". */
-export const endWords = (c: AgyCard) => `Antigravity · ${c.prompt.kind === "question" ? c.prompt.question : c.prompt.title} · ${c.how ?? "Answered in the terminal"}`;
+/** What a closed card says, as a hook ask's line: "Run: npm test · Allowed in the chat". */
+export function endWords(c: AgyCard) {
+  const p = c.prompt, cmd = p.kind === "permission" ? AG.commandOf(p) : null;
+  const what = p.kind === "question" ? p.question : cmd ? `Run: ${cmd.split("\n")[0].slice(0, 120)}` : p.title;
+  return `${what} · ${c.how ?? "Answered in the terminal"}`;
+}
 
 /** A dialog as the chat's card (web/plugins/chat/cards.tsx): a permission as its command with Allow once and Decline
  *  (Allow once is its first yes, Decline its no), a question as its choices (several picked when it takes several, a

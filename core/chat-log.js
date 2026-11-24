@@ -1339,7 +1339,7 @@ export class Conversation {
         if (name === "ask_question") {
           // its own question: answered on its screen (a card, service/agy-asks.ts), shown here as asked
           const questions = agyQuestions(a.questions);
-          const text = questions.map((q) => [q.text, ...q.choices.map((o) => `- ${o.label}`)].join("\n")).join("\n\n");
+          const text = questions.map((q) => q.text).join("\n\n");
           if (text) this.asked(id, { kind: "ask", id: `q${off}:${i}`, text, questions, at });
           this.open.set(id, "Asking you something");
           this.doing = "Asking you something";
