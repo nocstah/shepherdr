@@ -9,7 +9,7 @@
 // A hub whose machine.exec runs here with HOME a throwaway: its ~/.codex names the models, its templates folder
 // holds the Assistant's, and PATH has stand-in CLIs. hc is a script that records what it was asked to run.
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, utimesSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agents } from "./agents.ts";
@@ -125,6 +125,36 @@ test("the first message starts it on the choice (Codex, its model, service_tier 
   expect(command).not.toContain(`service_tier="fast"`);
   await Bun.sleep(20);
   expect(choiceOf(doc[CHOICE_KEY], "sp1")).toBeNull();
+});
+
+// Antigravity as the Assistant: picked in a fresh Assistant's model menu it is kept (choiceOf kept only Claude Code's
+// and Codex's), its chat says so, and the first message starts agy on it with its settings note after the template's
+// words (agy has no SessionStart hook); its terminal is then noted as told. A stand-in agy lists two levels of a model.
+test("Antigravity picked before the first message: kept, on its button, and the first message starts agy with its note", async () => {
+  writeFileSync(join(bin, "agy"), "#!/bin/sh\n[ \"$1\" = models ] && printf 'gemini-3.8-flash-low\\tGemini 3.8 Flash (Low)\\ngemini-3.8-flash-high\\tGemini 3.8 Flash (High)\\n'\nexit 0\n", { mode: 0o755 });
+  const calls = join(home, "herdr-task-calls");
+  writeFileSync(join(bin, "herdr-task"), `#!/bin/sh\necho "$*" >> '${calls}'\n[ "$2" = --space ] && printf 'Your settings: (test)\\n- Review: off\\n'\nexit 0\n`, { mode: 0o755 });
+  try {
+    const { compat, doc } = world();
+    expect(await act(hub, { type: "restart", chat: "p:sp1", kind: "antigravity", model: "gemini-3.8-flash", effort: "low", perm: "auto" }, compat)).toEqual({ ok: true, chosen: true });
+    expect(choiceOf(doc[CHOICE_KEY], "sp1")).toEqual({ agent: "antigravity", model: "gemini-3.8-flash", effort: "low", fast: false, perm: "auto" });
+    await compat.agents.freshMenu(null, choiceOf(doc[CHOICE_KEY], "sp1"));
+    const chat = compat.freshChat("p:sp1");
+    expect(chat).toMatchObject({ cli: "antigravity", agent: { kind: "antigravity", planned: { model: "gemini-3.8-flash", effort: "low" } } });
+    expect(chat.agent.words).toBe("Gemini 3.8 Flash · Low");
+    expect(await act(hub, { type: "send", chat: "p:sp1", text: "hello", cid: "c2" }, compat)).toMatchObject({ ok: true, started: true });
+    const { args, template } = JSON.parse(readFileSync(ran, "utf8"));
+    expect(/^command:(.*)$/m.exec(template)?.[1]).toContain("exec agy --model gemini-3.8-flash --effort low --mode auto");
+    // the template's words, then the note; the person's words come last (the chat shows them as theirs)
+    expect(template.endsWith("You are the Assistant.\n\nYour settings: (test)\n- Review: off\n")).toBe(true);
+    expect(args.at(-1)).toBe("hello");
+    await Bun.sleep(100);
+    expect(readFileSync(calls, "utf8")).toBe("_session-note --space sp1\n_session-note t9\n");
+    expect(choiceOf(doc[CHOICE_KEY], "sp1")).toBeNull();
+  } finally {
+    rmSync(join(bin, "agy"), { force: true });
+    rmSync(join(bin, "herdr-task"), { force: true });
+  }
 });
 
 test("a page with the chat open is sent the fresh chat, again only when it changed, and not the moment an Assistant goes", async () => {

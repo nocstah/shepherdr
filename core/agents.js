@@ -237,7 +237,7 @@ export const CHOICE_KEY = "coordinator.choice";
 // A space's choice as { agent, model, effort, fast, perm }, or null when none (or none that names an agent) is kept.
 export function choiceOf(all, space) {
   const c = space && all && typeof all === "object" ? all[space] : null;
-  if (!c || (c.agent !== "claude" && c.agent !== "codex")) return null;
+  if (!c || !KINDS.includes(c.agent)) return null;
   return { agent: c.agent, model: c.model ?? null, effort: c.effort ?? null, fast: c.fast === "ultrafast" ? "ultrafast" : Boolean(c.fast), perm: c.perm ?? null };
 }
 export const sameChoice = (a, b) => JSON.stringify(choiceOf({ x: a }, "x")) === JSON.stringify(choiceOf({ x: b }, "x"));

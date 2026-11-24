@@ -45,3 +45,13 @@ test("no Assistant yet: what its first message starts it on, the space's own pic
   expect(own.agent).toMatchObject({ kind: "claude", planned: { model: "claude-fable-5-2", modelLabel: "Fable 5.2", effort: "low" } });
   expect(other.agent).toMatchObject({ kind: "claude", planned: { model: "opus[1m]", modelLabel: "Opus 5.5 · 1M" } });
 });
+
+// Antigravity as the Assistant: its place names what agy runs, from its arguments, as for Claude Code and Codex (it
+// said nothing: only those two were looked at).
+test("a space whose Assistant runs on Antigravity names its model and level", () => {
+  const AGY = ["agy", "--model", "gemini-3.8-flash", "--effort", "low", "--mode", "auto"];
+  const c = world({ t1: { address: "t1", state: "live", argv: ["sh", "-c", "exec agy --model gemini-3.8-flash --effort low --mode auto"], foreground: { argv: AGY, name: "agy" }, labels: label("sp1"), created_ms: 1 } });
+  c.agents.cached = () => ({ model: "gemini-4-neon", effort: "high" });
+  const p = snap(c, [{ id: "sp1", name: "demo", folder: "/srv/demo", machine: null, assistant: "t1" }]).places[0];
+  expect(p.agent).toMatchObject({ kind: "antigravity", model: "gemini-3.8-flash", effort: "low" });
+});

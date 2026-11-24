@@ -161,6 +161,62 @@ class NoTab(unittest.TestCase):
         self.assertEqual(r.stderr.strip(), "It didn't restart on vmb: t2 has no space, tab or chat to restart into.")
 
 
+class AntigravityAssistant(unittest.TestCase):
+    """Antigravity as the Assistant. agy has no SessionStart hook to tell an Assistant its settings and the chat's own
+    words: switched to it, they follow the template's words in its first message (herdr-task's note for its space),
+    before the handoff, and its terminal is noted as told once it runs; resumed on its own conversation, what that
+    conversation was told stays told on the new terminal. Its herdr.agent label is its key, antigravity, not agy."""
+
+    LABELS = {"herdr.space": "sp1", "herdr.coordinator.space": "sp1", "herdr.role": "coordinator",
+              "herdr.settings": "review:1a2b3c", "herdr.reactions": "on"}
+
+    def restart(self, argv, env):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "bin"))
+        tdir = os.path.join(d, ".config", "herdr-core", "templates")
+        os.makedirs(tdir)
+        with open(os.path.join(tdir, "assistant.md"), "w") as f:
+            f.write("---\nname: assistant\ndescription: x\ncommand: claude\n---\nYou are the Assistant.\n")
+        rec = json.dumps({"address": "t2", "cwd": "/tmp", "template": "assistant", "labels": self.LABELS})
+        # run: its arguments, and the one-off template it was given (removed once it has started)
+        hc = LOCAL_HC.replace(LOCAL_HC.split("\n")[3], f"  get) echo '{rec}' ;;").replace(
+            "  run) printf '%s\\n' \"$@\" >\"$FAKE_DIR/run-args\";",
+            "  run) printf '%s\\n' \"$@\" >\"$FAKE_DIR/run-args\"; for a; do t=$a; done; cp \"" + tdir + "/$t.md\" \"$FAKE_DIR/tpl\" 2>/dev/null;")
+        with open(os.path.join(d, "bin", "hc"), "w") as f:
+            f.write(hc)
+        with open(os.path.join(d, "bin", "herdr-task"), "w") as f:
+            f.write('#!/bin/sh\necho "$*" >> "$FAKE_DIR/herdr-task"\n[ "$2" = --space ] && printf \'Your settings: (for %s)\\n- Review: off\' "$3"\nexit 0\n')
+        for x in ("hc", "herdr-task"):
+            os.chmod(os.path.join(d, "bin", x), 0o755)
+        e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d, **env}
+        r = subprocess.run(["bash", SCRIPT, "t2", json.dumps(argv)], env=e, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "t9")
+        got = lambda n: read(os.path.join(d, n)) if os.path.exists(os.path.join(d, n)) else ""
+        return got("run-args").split("\n"), got("tpl"), got("herdr-task")
+
+    def test_switched_to_antigravity_its_note_goes_in_its_first_message(self):
+        args, tpl, asked = self.restart(["agy", "--model", "gemini-3.8-flash", "--effort", "low"], {})
+        self.assertIn("herdr.agent=antigravity", args)
+        self.assertNotIn("herdr.settings=review:1a2b3c", args, "a new conversation: told afresh, not carried")
+        self.assertIn("exec agy --model gemini-3.8-flash --effort low", tpl)
+        body = tpl.split("---\n", 2)[2]
+        self.assertTrue(body.startswith("You are the Assistant.\n\nYour settings: (for sp1)\n- Review: off\n\nYou are taking over this tab"), body[:200])
+        self.assertEqual(asked.split("\n"), ["_session-note --space sp1", "_session-note t9", ""])
+
+    def test_resumed_on_its_conversation_it_stays_told(self):
+        args, _, asked = self.restart(["agy", "--model", "gemini-3.8-flash", "--conversation", "c-1"], {"HERDR_RESTART_RESUME": "1"})
+        for label in ("herdr.settings=review:1a2b3c", "herdr.reactions=on", "herdr.agent=antigravity"):
+            self.assertIn(label, args)
+        self.assertEqual(args[args.index("herdr-clean") + 1:][:5], ["agy", "--model", "gemini-3.8-flash", "--conversation", "c-1"])
+        self.assertEqual(asked, "")
+
+    def test_claude_code_gets_no_note_its_hook_tells_it(self):
+        _, tpl, asked = self.restart(["claude", "--model", "opus"], {})
+        self.assertNotIn("Your settings", tpl)
+        self.assertEqual(asked, "")
+
+
 class Bash32(unittest.TestCase):
     """macOS's /bin/bash is 3.2, without bash 4's mapfile and readarray (GitHub #736): restart.sh still restarts."""
 

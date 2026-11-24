@@ -184,7 +184,8 @@ const PERM_ABOUT: Record<string, Record<string, string>> = {
   antigravity: { acceptEdits: "Edits files without asking, asks before commands", auto: "Decides by itself what is safe to run", plan: "Plans first and changes nothing", bypassPermissions: "Never asks" },
 };
 // The agents that run tasks and reviews but no chat of their own yet (an Assistant): greyed where a chat is picked.
-const NO_CHATS = new Set(["antigravity"]);
+// None now: Antigravity runs an Assistant too.
+const NO_CHATS = new Set<string>();
 const PERM_LABEL: Record<string, string> = { manual: "Default", bypassPermissions: "Bypass" };
 
 /** A machine's agents and their models, from what each agent's own settings and catalog say there (`choices`: per CLI

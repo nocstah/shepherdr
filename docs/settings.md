@@ -7,7 +7,7 @@ Settings is one window. Open it from the foot of the list. On a phone it is a li
 | Section | What is in it |
 |---|---|
 | General | Theme, Chat width, Motion, and "Alerts on this device": Needs me, Everything or Off. Kept in that browser |
-| Agents | What Chats, Tasks and Reviews run on. Each row opens the picker: Agent, Model, Permissions, Effort, Speed. Tasks and Reviews can run on Claude Code, Codex or Antigravity (where `agy` is installed); Chats on Claude Code or Codex |
+| Agents | What Chats, Tasks and Reviews run on. Each row opens the picker: Agent, Model, Permissions, Effort, Speed. Chats, Tasks and Reviews can run on Claude Code, Codex or Antigravity (where `agy` is installed) |
 | Tasks | Review by a second agent, Merge ("When I mark it as done", "When all checks pass", "Right away"), Proof |
 | Secrets | Add or replace a secret. Agents use it by name and never see it |
 | Machines | Each machine's agents, processor, memory and disk. Add a machine. Open desktop, where a machine has one |
@@ -42,7 +42,10 @@ The picker in a message box changes that one chat or task. What new chats and ta
 On Antigravity (`agy`), the picker's models and efforts are the ones `agy models` lists, and its permission modes
 start it with `--mode accept-edits`, `--mode auto`, `--mode plan` or `--dangerously-skip-permissions`. A task's first
 message goes as `-i`; a restart or a reply after its agent ended runs `agy --conversation <its id>`. Its
-conversations are under `$ANTIGRAVITY_CLI_DATA_DIR` (default `~/.gemini/antigravity-cli`).
+conversations are under `$ANTIGRAVITY_CLI_DATA_DIR` (default `~/.gemini/antigravity-cli`). An Assistant on Antigravity
+starts from the assistant template as on the others; as `agy` has no SessionStart hook for it, its "Your settings"
+block and the chat's own words (reactions, replies, task mentions, artifacts) follow the template in its first
+message (`herdr-task _session-note --space <id>`), and a restart on its own conversation keeps them told.
 
 ## Where they are kept
 

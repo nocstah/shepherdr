@@ -537,7 +537,8 @@ def main():
     c.add_argument("--sandboxed", action="store_true")  # Codex's: its proof and commits run escalated (#866)
     c.set_defaults(fn=cmd_allow, json=False)
     c = sub.add_parser("_session-note")  # the chat's SessionStart hook (mods/chat/session-note.sh): an Assistant's extra words
-    c.add_argument("terminal")
+    c.add_argument("terminal", nargs="?")
+    c.add_argument("--space")  # an Antigravity Assistant's first message: its whole note, plain (assistant_settings.space_note)
     c.set_defaults(fn=cmd_session_note, json=False)
     c = sub.add_parser("_hold-news")  # feedback's report, queued for its Assistant in the background (feedback.queue_news)
     c.add_argument("to")

@@ -125,10 +125,17 @@ own=""
 [ -z "$argv" ] && [ "$role" = coordinator ] && own=$(awk '/^---[[:space:]]*$/ {f++; next} f == 1 && sub(/^command:[ \t]*/, "") {print; exit}' "$tpl" 2>/dev/null)
 # argv's words into cmd. A read loop, not mapfile: macOS's /bin/bash is 3.2, which has no mapfile (#736).
 argv_cmd() { local a; cmd=(); while IFS= read -r a; do cmd+=("$a"); done < <(jq -r '.[]' <<<"$argv"); }
+# The herdr.agent label is the agent's key: Antigravity's program is agy (or antigravity).
+agent_key() { case $1 in agy|antigravity) echo antigravity ;; *) echo "$1" ;; esac; }
 if [ -n "${HERDR_RESTART_RESUME:-}" ] && [ -n "$argv" ]; then
   argv_cmd
   [ ${#cmd[@]} -gt 0 ] || exit 1
-  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(basename "${cmd[0]}")" -- sh -c "$clean"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
+  # its own conversation again: what it was told of its settings stays told, so herdr-task tells only what changed since
+  # (Antigravity has no SessionStart hook to tell it again on a resume, as Claude Code's and Codex's do)
+  for k in herdr.settings herdr.reactions; do
+    v=$(get ".labels[\"$k\"]"); [ -n "$v" ] && labels+=(--label "$k=$v")
+  done
+  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(agent_key "$(basename "${cmd[0]}")")" -- sh -c "$clean"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
 elif [ -z "$argv" ] && [ "$role" = coordinator ] && [ -z "$own" ]; then
   new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" assistant "$handoff" | jq -r .address)
 else
@@ -143,10 +150,17 @@ else
     [ "$key" = codex ] && [[ " ${cmd[*]} " != *" --no-daemon "* ]] && cmd+=(--no-daemon)
     line=$(printf '%q ' "${cmd[@]}")
   fi
-  msg=$handoff
+  msg=$handoff note=""
   if [ "$role" = coordinator ]; then
     body=$(awk 'f>=2 {print} /^---[[:space:]]*$/ {f++}' "$tpl")
     msg="$body"$'\n\n'"$handoff"
+    # Antigravity has no SessionStart hook to tell an Assistant its settings and the chat's own words: they go in its
+    # first message, before the handoff (herdr-task's space_note), and its terminal is noted as told once it runs
+    if [ "$(agent_key "$key")" = antigravity ]; then
+      sp=$(get '.labels["herdr.coordinator.space"]'); sp=${sp:-$space}
+      [ -n "$sp" ] && note=$(herdr-task _session-note --space "$sp" 2>/dev/null)
+      [ -n "$note" ] && msg="$body"$'\n\n'"$note"$'\n\n'"$handoff"
+    fi
   fi
   # hc delivers a template's first message once the agent is ready, so the
   # handoff goes in a one-off template, removed once it has started.
@@ -154,9 +168,10 @@ else
   file=$tdir/$one.md
   { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
     printf '%s\n' "$msg"; } >"$file"
-  out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
+  out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(agent_key "$key")" "$one")
   rm -f "$file"
   new=$(jq -r '.address // empty' <<<"$out")
+  [ -n "$new" ] && [ -n "$note" ] && herdr-task _session-note "$new" >/dev/null 2>&1
   # Some agents (Codex's animated start) never settle for hc: send once it reports a status.
   if [ -n "$new" ] && [ "$(jq -r '.first_message.sent' <<<"$out")" = false ]; then
     hc wait "$new" --timeout 90 >/dev/null 2>&1

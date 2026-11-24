@@ -5070,6 +5070,30 @@ class AssistantSettings(unittest.TestCase):
         self.assertIn("\n- Review: off\n", ctx)
         self.assertIn('<hc react="👀"', ctx)
 
+    def test_an_antigravity_assistants_first_message_note(self):
+        """Antigravity as the Assistant: no SessionStart hook tells it, so its first message carries the hook's own words,
+        its settings block and the Reactions guide (space_note), plain, for a space before its terminal is there; nothing
+        is noted then. Its terminal, once it runs, is noted as told by the hook's call (session_note), so the settings
+        pass sends it nothing more."""
+        import contextlib
+        import io
+        self.write({"spaces": {"sp1": {"agents": {"reactions": False}}}})
+        note = self.aset.space_note("sp1")
+        self.assertTrue(note.startswith(self.aset.CHAT_NOTE + "\n\nYour settings: "))
+        self.assertIn("\n- Review: off\n", note)
+        self.assertIn("- Reactions: off", note)
+        self.assertTrue(note.endswith(self.aset.reactions.OFF))
+        self.assertEqual(self.labelled, [])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.aset.cmd_session_note(type("A", (), {"terminal": None, "space": "sp1"})())
+        self.assertEqual(out.getvalue(), note)  # plain: no JSON escapes
+        # started: noted as told, and the pass then has nothing to tell it
+        self.assistant("t5", "sp1", turn=1)
+        self.aset.session_note("t5")
+        self.aset.settings_pass({}, {})
+        self.assertEqual(self.sent, [])
+
     def test_a_running_assistant_is_told_once_what_changed_in_one_message(self):
         self.assistant()
         self.aset.session_note("t5")
@@ -10102,6 +10126,22 @@ class NeverTypedIntoAShell(unittest.TestCase):
         self.assertEqual(r[-6:], ["claude", "--model", "opus", "--resume", "s-1", "<herdr-news>SHOP-7 is ready</herdr-news>"])
         self.assertIn(["hc", "kill", "t3"], self.calls)
         self.assertIn(["hc", "rm", "t3"], self.calls)
+
+    def test_an_antigravity_assistant_starts_again_on_its_conversation_and_stays_told(self):
+        """Antigravity as the Assistant: it resumes its own conversation (--conversation, the message as -i's), and what
+        that conversation was told of its settings stays told (agy has no SessionStart hook to tell it again on a
+        resume, as Claude Code's does), so the settings pass tells it only what changed since."""
+        rec = json.dumps({"kind": "antigravity", "session": "c-1", "argv": ["agy", "--model", "gemini-3.8-flash", "--effort", "low"], "cwd": "/w/shop"})
+        self.term("t3", self.SHELL, {"herdr.role": "coordinator", "herdr.space": "sp1", "herdr.coordinator.space": "sp1",
+                                     "herdr.agent": "antigravity", "herdr.resume": rec, "herdr.settings": "review:1a2b3c", "herdr.reactions": "on"})
+        self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "hello"), "t9")
+        r = [c for c in self.calls if c[:2] == ["hc", "run"]][0]
+        for label in ("herdr.role=coordinator", "herdr.coordinator.space=sp1", "herdr.agent=antigravity",
+                      "herdr.settings=review:1a2b3c", "herdr.reactions=on"):
+            self.assertIn(label, r)
+        self.assertIn("agy", r)
+        self.assertEqual(r[r.index("--conversation"):], ["--conversation", "c-1", "-i", "hello"])
+        self.assertIn(["hc", "kill", "t3"], self.calls)
 
     def test_an_assistant_without_a_record_starts_fresh_with_the_message_as_its_task(self):
         self.assistant(record=False)

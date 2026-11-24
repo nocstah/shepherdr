@@ -35,6 +35,19 @@ NOTICE_END = "Nothing to answer: reply only <hc no-reply/>."
 INSTRUCTIONS_GONE = ("Shepherdr's Instructions setting is gone: the instructions you were told from it no longer apply. "
                      "How to work comes from the repo's or folder's AGENTS.md / CLAUDE.md and your own global file.")
 NO_INSTRUCTIONS = hashlib.sha1(b"none").hexdigest()[:6]  # what the old "instructions" line's hash was with none set
+# What the chat's SessionStart hook (hooks/session-note.sh) tells every agent before its own extra words. An Assistant on
+# a CLI that has no such hook for it (Antigravity) gets these words in its first message instead (space_note);
+# test_repo keeps the two the same.
+CHAT_NOTE = ("Herdr chat: the person may react to your messages. A reaction arrives as a line like "
+             "<hc from=\"person\" reaction=\"👍\" to=\"first words of your message\"/> (removed: reaction-removed=). Reactions need "
+             "no reply: if one is all you got, answer only <hc no-reply/>. To react to the person's message, write a line of its "
+             "own in the reply that ends your turn (a message before a tool call may be shortened, losing the line): "
+             "<hc react=\"👀\" to=\"first words of their message\"/>. In to=, leave out double quotes or make them curly (“ ”). "
+             "The chat shows these as reactions and hides the lines. A reply to one of your messages starts with "
+             "<hc reply-to=\"first words of that message\"/>. A mention of a task (e.g. HAT-1) comes with a line "
+             "<hc task=\"HAT-1\" title=… state=… folder=…>its prompt</hc>: that is the task they mean. Artifacts: to show the "
+             "person something richer than text (a report, chart, board, form or proof), write a recipe (recipe.json, drawn in "
+             "the window and on their phone) and publish it with herdr-artifact; run `herdr-artifact guide` first.")
 
 
 def space_of(k):
@@ -249,11 +262,25 @@ def session_note(terminal):
     return block(rs) + "\n" + (reactions.GUIDE if on else reactions.OFF)
 
 
+def space_note(space):
+    """What a new Assistant of `space` is told in its first message when its CLI has no SessionStart hook for it
+    (Antigravity): the hook's own words, its settings block and the Reactions guide (or never), as plain text. Its
+    terminal isn't there yet, so nothing is noted: session_note(<its terminal>) notes it once it has started."""
+    rs = rows(space)
+    on = next(r for r in rs if r["key"] == "reactions")["value"] == "on"
+    return CHAT_NOTE + "\n\n" + block(rs) + "\n" + (reactions.GUIDE if on else reactions.OFF)
+
+
 def cmd_session_note(args):
     """`herdr-task _session-note <terminal>`: the hook's extra words, as JSON string content
-    (escaped, without the quotes) so the hook can put them in its own JSON as they are."""
+    (escaped, without the quotes) so the hook can put them in its own JSON as they are.
+    `herdr-task _session-note --space <space>`: a new Assistant's whole note for its first message, as plain text
+    (space_note); the service and restart.sh start an Antigravity Assistant with it."""
+    if getattr(args, "space", None):
+        sys.stdout.write(space_note(args.space))
+        return
     try:
-        text = session_note(args.terminal)
+        text = session_note(args.terminal) if args.terminal else ""
     except Exception:  # a hook never fails a session's start
         text = ""
     if text:

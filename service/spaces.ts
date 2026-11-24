@@ -11,7 +11,7 @@ import * as NS from "../core/newspace.js";
 import * as SP from "../core/spaces.js";
 import { AGENT_PATH, cleanCommand } from "../core/clean-env.js";
 import { TEMPLATES_SH } from "../core/paths.js";
-import { argvFor, NAMES, CHOICE_KEY, choiceOf, withChoice } from "../core/agents.js";
+import { argvFor, NAMES, PROGRAMS, CHOICE_KEY, choiceOf, withChoice } from "../core/agents.js";
 import { spawn } from "./spawn.ts";
 
 /** A space's id as the app names it: another machine's is "<machine>/<id>". */
@@ -85,27 +85,42 @@ export async function newSpaceInfo(hub: Hub, machine: string | null, at: string 
  *  it): its command in place of the template's own (#1051: the web started the stock `claude`), unless that agent
  *  isn't installed there (then the template's own, as the window). Neither installed: refused in plain words, never a
  *  start that ends at once ("exec: claude: not found") and leaves the chat on Starting.
- *  words: the template's own words (its first message), when read. Unreadable: the template itself. */
-export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null): Promise<{ name: string; words: string; done: () => void }> {
-  const plain = { name, words: "", done: () => {} };
+ *  words: the template's own words (its first message), when read. Unreadable: the template itself.
+ *  space: the space it starts for (its bare id there). Antigravity has no SessionStart hook to tell an Assistant its
+ *  settings and the chat's own words (hooks/session-note.sh), so for it they follow the template's words in its first
+ *  message (herdr-task's space_note), and told(<its address>) notes its terminal as told once it runs. */
+export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null, space: string | null = null): Promise<{ name: string; words: string; done: () => void; told: (addr: string) => Promise<void> }> {
+  const plain = { name, words: "", done: () => {}, told: async () => {} };
   const DIR = TEMPLATES_SH + 'dir="$SHEP_TEMPLATES"; ';   // where herdr-core reads them there (#1182)
   const src = (await exec(hub, ["sh", "-c", DIR + 'cat "$dir/$1.md"', "x", name], machine).catch(() => null))?.stdout ?? "";
   const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
   const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
   if (!head || !own) return plain;
   const has = async (prog: string) => (await exec(hub, ["sh", "-c", `${AGENT_PATH} command -v "$1" >/dev/null 2>&1`, "x", prog], machine).catch(() => null))?.code === 0;
-  let cmd = own;
-  if (pick?.agent === "claude" || pick?.agent === "codex") {
-    if (await has(pick.agent)) cmd = argvFor(pick, { agent: null, argv: [] }).argv.map(shellWord).join(" ");
-    else if (!(await has(own.split(/\s+/)[0]))) {
+  let cmd = own, body = src.slice(head[0].length), agy = false;
+  if (pick?.agent === "claude" || pick?.agent === "codex" || pick?.agent === "antigravity") {
+    // the program it runs: Antigravity's is agy, or antigravity where only that name is there
+    const prog = (await (async () => { for (const p of (PROGRAMS as Record<string, string[]>)[pick.agent]) if (await has(p)) return p; return null; })());
+    if (prog) {
+      const argv = argvFor(pick, { agent: null, argv: [] }).argv;
+      cmd = [prog, ...argv.slice(1)].map(shellWord).join(" ");
+      agy = pick.agent === "antigravity";
+    } else if (!(await has(own.split(/\s+/)[0]))) {
       throw new Error(`${(NAMES as Record<string, string>)[pick.agent] ?? pick.agent} isn't installed on ${machine ?? "this computer"}. Install it, or pick another agent for the Assistant in Settings › Agents.`);
     }
   }
+  // an older herdr-task there has no --space: no note, and its settings pass tells it the block after its first turn
+  const note = agy && space ? (await exec(hub, ["sh", "-c", 'herdr-task _session-note --space "$1"', "x", space], machine).catch(() => null)) : null;
+  if (note?.code === 0 && note.stdout.trim()) body = `${body.trim()}\n\n${note.stdout.trim()}\n`;
   const one = `herdr-${name}-${Date.now().toString(36)}`;
-  const file = `---\nname: ${one}\ndescription: A one-off ${name} start that execs its command (Shepherdr's service), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${src.slice(head[0].length)}`;
+  const file = `---\nname: ${one}\ndescription: A one-off ${name} start that execs its command (Shepherdr's service), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${body}`;
   const w = await exec(hub, ["sh", "-c", DIR + 'printf "%s" "$2" > "$dir/$1.md"', "x", one, file], machine).catch(() => null);
   if (w?.code !== 0) return plain;
-  return { name: one, words: src.slice(head[0].length).trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
+  const told = async (addr: string) => {
+    if (note?.code !== 0 || !addr) return;
+    await exec(hub, ["sh", "-c", 'herdr-task _session-note "$1" >/dev/null', "x", addr.split("/").pop()!], machine).catch(() => null);
+  };
+  return { name: one, words: body.trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null), told };
 }
 
 /** One word of a command line for sh, quoted only when it needs it (as mods/chat's). */
@@ -160,10 +175,11 @@ export async function newSpace(hub: Hub, opts: { machine: string | null; path: s
     if (opts.keepPick && chosen && choiceOf({ x: chosen }, "x")) await opts.store.set(CHOICE_KEY, withChoice(opts.store.value(CHOICE_KEY), place, chosen)).catch(() => null);
   };
   let t: Awaited<ReturnType<typeof execTemplate>>;
-  try { t = await execTemplate(hub, "assistant", machine, chosen); } catch (e) { await keep(); throw e; }
+  try { t = await execTemplate(hub, "assistant", machine, chosen, id); } catch (e) { await keep(); throw e; }
   const r = await run(["hc", "run", "--bg", "--keep", "--no-parent", ...(machine ? ["--on", machine] : []), "--cwd", abs,
-    "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, t.name]).catch((e) => ({ code: 127, out: "", err: String(e) }));
+    "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, "--json", t.name]).catch((e) => ({ code: 127, out: "", err: String(e) }));
   t.done();
+  if (r.code === 0) { try { void t.told(String(JSON.parse(r.out || "{}").address ?? "")).catch(() => null); } catch {} }
   // its Assistant didn't start (SHEP-294): the space stays, and its chat starts one with its first message (actions.ts)
   if (r.code !== 0) await keep();
   return r.code === 0 ? { place } : { place, error: notStarted(r) };
