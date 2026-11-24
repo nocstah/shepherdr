@@ -33,7 +33,7 @@ import type { Snapshot } from "../web/shared/types.ts";
 import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
-import { act, findMachines, hc as hcRun } from "./actions.ts";
+import { act, findMachines, firstWhenIdle, hc as hcRun } from "./actions.ts";
 import { AgentWatch } from "./watch.ts";
 import { Compat, activity, newsKey, placeKey } from "./compat.ts";
 import { keep, served as fileResponse, smaller } from "./media.ts";
@@ -1036,7 +1036,7 @@ const server = Bun.serve<{ who: string }>({
         // the name typed and the agent picked in the New space dialog (none: named after its folder, on Settings' choice)
         const name = typeof b?.name === "string" && b.name.trim() ? b.name.trim().slice(0, 80) : undefined;
         const picked = pickFrom(b?.agent);
-        const made = await newSpace(hub, { machine, path: String(b?.path ?? ""), ...(name ? { name } : {}), makeRepo: !!b?.makeRepo, icon, others: model.hasOthers(), store: compat.shared!, pick: picked ? () => picked : compat.assistantPick, keepPick: !!picked });
+        const made = await newSpace(hub, { machine, path: String(b?.path ?? ""), ...(name ? { name } : {}), makeRepo: !!b?.makeRepo, icon, others: model.hasOthers(), store: compat.shared!, pick: picked ? () => picked : compat.assistantPick, keepPick: !!picked, held: (addr, words) => void firstWhenIdle(hub, addr, words) });
         if (made.error) console.error(`new space ${made.place}: ${made.error}`);
         // the page opens it once the sidebar has it: in the snapshot before the answer
         await model.waitSpace(made.place);

@@ -131,7 +131,7 @@ export const shellWord = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${St
  *  unnamed: left to follow its folder), and `icon` is kept as the sidebar's Rename keeps it. It joins the list of
  *  spaces (shared "spaces") and its Assistant starts from the assistant template. Returns its id (place), with error
  *  when its Assistant didn't start: the space is kept, and its first message starts one. */
-export async function newSpace(hub: Hub, opts: { machine: string | null; path: string; name?: string; unnamed?: boolean; others?: boolean; makeRepo?: boolean; icon?: string | null; pick?: ((space: string) => any) | null; keepPick?: boolean; store: { value(k: string): any; set(k: string, v: unknown): Promise<unknown> } }) {
+export async function newSpace(hub: Hub, opts: { machine: string | null; path: string; name?: string; unnamed?: boolean; others?: boolean; makeRepo?: boolean; icon?: string | null; pick?: ((space: string) => any) | null; keepPick?: boolean; held?: ((addr: string, words: string) => void) | null; store: { value(k: string): any; set(k: string, v: unknown): Promise<unknown> } }) {
   const { machine } = opts;
   if (!opts.path || opts.path.includes("\0")) throw new Error("Pick a folder.");
   const home = (await homeOf(hub, machine)) ?? "";
@@ -179,7 +179,14 @@ export async function newSpace(hub: Hub, opts: { machine: string | null; path: s
   const r = await run(["hc", "run", "--bg", "--keep", "--no-parent", ...(machine ? ["--on", machine] : []), "--cwd", abs,
     "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, "--json", t.name]).catch((e) => ({ code: 127, out: "", err: String(e) }));
   t.done();
-  if (r.code === 0) { try { void t.told(String(JSON.parse(r.out || "{}").address ?? "")).catch(() => null); } catch {} }
+  let out: any = {};
+  try { out = r.code === 0 ? JSON.parse(r.out || "{}") : {}; } catch {}
+  const addr = String(out.address ?? "");
+  if (addr) void t.told(addr).catch(() => null);
+  // held on its CLI's own start screen (Antigravity's "Do you trust the contents of this project?" in a new folder,
+  // Claude Code's trust): hc keeps the template's words and never sends them, so they go once it is idle past that
+  // screen (actions.ts firstWhenIdle), as for an Assistant started by its first message
+  if (addr && out.first_message?.sent === false && t.words) opts.held?.(machine && !addr.includes("/") ? `${machine}/${addr}` : addr, t.words);
   // its Assistant didn't start (SHEP-294): the space stays, and its chat starts one with its first message (actions.ts)
   if (r.code !== 0) await keep();
   return r.code === 0 ? { place } : { place, error: notStarted(r) };
