@@ -13,7 +13,7 @@ export type SourceArgs = { task?: string; place?: string; chat?: string; artifac
  *  id); rest: the path's rest is its own path (a file, a folder) instead of a drill into it. serves: the web app's
  *  reads it covers ("api:<path>" a GET, "action:<type>" a read action). */
 export const SOURCES: Record<string, { about: string; arg?: "task" | "task-or-space" | "space" | "chat" | "machine"; rest?: boolean; serves: string[] }> = {
-  insights: { about: "Usage insights: how the person has used Shepherdr (screens and time on them, actions, features, errors, asks), from this machine's private log", serves: ["log:usage.jsonl"] },
+  insights: { about: "Personal analytics: how the person has used Shepherdr over the last month (messages and how they were written, tasks, how long tasks waited on them, questions, errors), kept only on their machines; path day, week or month for that period", serves: ["action:analytics"] },
   evidence: { about: "a task's review card: what it says changed, files changed, checks, proof", arg: "task", serves: ["action:evidence"] },
   changes: { about: "a task's or space's changed files: lines added and removed", arg: "task-or-space", serves: [] },
   patch: { about: "one changed file's diff (path: the file)", arg: "task-or-space", rest: true, serves: [] },
@@ -44,6 +44,7 @@ export const NOT_DATA: Record<string, string> = {
   "api:push": "this device's own notification subscription",
   "action:earlier": "a chat's older messages: look chat reads further back itself",
   "action:catalog": "the picker's lists (a machine's agents and their models): look data's models has the same menus",
+  "action:voice-check": "Settings › Voice's test of the ElevenLabs key: a call that is on already proves it works",
 };
 
 /** The web app's actions that change something (act, send or screen do them), not data to read: every one the page

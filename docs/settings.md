@@ -13,6 +13,7 @@ Settings is one window. Open it from the foot of the list. On a phone it is a li
 | Machines | Each machine's agents, processor, memory and disk. Add a machine. Open desktop, where a machine has one |
 | Usage | How much of each plan your agents have used, with reset times |
 | Plugins | A switch for Terminal, Screens, Voice, Schedules and Reactions ([Plugins](plugins.md)) |
+| Personal analytics | How you use Shepherdr, kept only on your machines: on or off, your numbers, see, export or delete it ([analytics.md](analytics.md)) |
 
 ## Task settings follow the repo
 
@@ -67,7 +68,7 @@ edits the file, or edit it yourself.
 |---|---|
 | `backup.agent` | The other agent takes over a task once when its own can't go on; `"off"` turns that off, and a CLI's key (`"claude"`, `"codex"`, `"antigravity"`) names the one |
 | `agents.reactions` | Agents react to some of your messages with an emoji |
-| `agents.suggestions` | Suggested replies: an agent ends its message with one to three replies you can send with a tap, or one per option (up to five) when it asks a question with options |
+| `agents.suggestions` | Suggested replies: an agent ends its message with one to three replies you can send with a tap, or one per option (up to five) when it asks a question with options; each at most 30 characters, what a phone's bubble holds (one far longer isn't shown) |
 | `agents.feedback`, `agents.feedback_repo` | Agents offer once to file a problem with Shepherdr, and where |
 | `tasks.review_rounds`, `tasks.must_fix` | How many review rounds, and what a review must get fixed |
 | `tasks.archive_after` | Days before a Done task is archived |

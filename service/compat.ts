@@ -52,7 +52,7 @@ export const newsKey = (rows: Row[]) => JSON.stringify(rows.filter((r) => r.spac
 const NEWS: Record<string, TaskStatus> = { added: "todo", queued: "queued", started: "work", needs: "need", asks: "need", stalled: "need", failed: "need", ready: "ready", merging: "merging", merged: "done", done: "done", closed: "done" };
 type Sent = { cid: string; text: string; files: string[]; at: number };
 // (the tag lines a send puts before the words, if a log keeps them: the message it answers, the tasks it mentions)
-const said = (v: string) => v.replace(/^\s*<hc\b[^>]*\/>\s*$/gm, "").replace(/^\s*<hc task=[^\n]*<\/hc>\s*$/gm, "").replace(/\s+/g, " ").trim();
+const said = (v: string) => v.replace(/^\s*!\s+/, "!").replace(/^\s*<hc\b[^>]*\/>\s*$/gm, "").replace(/^\s*<hc task=[^\n]*<\/hc>\s*$/gm, "").replace(/\s+/g, " ").trim();
 /** how much earlier than the service's clock another machine's log may stamp a message (its clock may differ) */
 const CLOCKS = 60_000;
 const base = (p: string) => p.split("/").pop() ?? p;
@@ -72,6 +72,28 @@ export function sentAs(sends: Sent[], x: { text?: string; at?: number; images?: 
   });
   if (s) taken.add(s.cid);
   return s?.cid;
+}
+
+/** The page's sends a message in the log is made of, when the agent got several as one (two sent in a row while it
+ *  worked, joined in its box, with a blank line or glued): 2+ of them in the order sent, their words together being its
+ *  words. Words alone (no files); each send is one message (taken). */
+export function sentParts(sends: Sent[], x: { text?: string; at?: number; images?: number; paths?: string[] }, taken: Set<string>): Sent[] | undefined {
+  if (!x.text || x.images || x.paths?.length) return;
+  const at = x.at ?? 0, bare = (v: string) => said(v).replace(/\s+/g, "");
+  const want = bare(x.text);
+  const open = sends.filter((s) => !taken.has(s.cid) && !s.files.length && bare(s.text) && at >= s.at - CLOCKS && at - s.at <= 30 * 60_000).sort((p, q) => p.at - q.at);
+  for (let i = 0; i < open.length; i++) {
+    let got = "";
+    for (let j = i; j < open.length; j++) {
+      got += bare(open[j].text);
+      if (!want.startsWith(got)) break;
+      if (got === want && j > i) {
+        const parts = open.slice(i, j + 1);
+        for (const p of parts) taken.add(p.cid);
+        return parts;
+      }
+    }
+  }
 }
 
 // a message's reactions as 2.1 shows them: yours, the agent's, or both
@@ -629,6 +651,12 @@ export class Compat {
           ...(from ? { relay: { dir: "from", name: from, ...(files.length ? { files } : {}) } } : {}) } as Message);
       } else if (x.kind === "user" && (x.text || x.paths?.length || x.images)) {
         const sentCid = sends.length && !x.from ? sentAs(sends, x, takenSends) : undefined;
+        // several sent in a row that the agent got as one: each shows as sent, on its own, with its id
+        const parts = !sentCid && sends.length > 1 && !x.from && !x.replyTo ? sentParts(sends, x, takenSends) : undefined;
+        if (parts) {
+          parts.forEach((p, n) => messages.push({ id: n ? `${x.id}:c${n}` : x.id, who: "you", text: p.text, at: x.at, cid: p.cid, ...(n ? {} : reactions) } as Message));
+          continue;
+        }
         const cid = sentCid ? { cid: sentCid } : {};
         // the tasks it mentions, as chips under it (core/send.js: the same matching as the window's)
         // one picked with @ already draws as a chip in its words (core/mentions.js): not again under them
@@ -667,6 +695,13 @@ export class Compat {
           messages.push({ id: `${x.id}:m${n}`, who: "agent", at: x.at, file: { name: m.name, path: m.path, ...(m.alt ? { alt: m.alt } : {}) }, ...(md.text || n ? {} : reactions) } as Message);
         }
       }
+      else if (x.kind === "command" && x.text) {
+        // a `!` command the person ran in the agent's shell: its row, with its state and what it printed; the page's
+        // send of it known again by its words
+        const text = `!${x.text}`;
+        const sentCid = sends.length ? sentAs(sends, { text, at: x.at }, takenSends) : undefined;
+        messages.push({ id: x.id, who: "you", at: x.at, text, ...(sentCid ? { cid: sentCid } : {}), command: { state: x.state, ...(x.out ? { out: x.out } : {}) } } as Message);
+      }
       else if (x.kind === "error" && x.text) messages.push({ id: x.id, who: "agent", text: x.text, at: x.at, error: true });
       // its own question asked now shows as its card (at the end), in place of its "Asked you" box, as the window's
       else if (x.kind === "ask" && !x.closed && (asking || x === codexCard)) continue;
@@ -704,6 +739,12 @@ export class Compat {
       const words = (v: string) => v.replace(/\s+/g, " ").trim();
       const s = (this.sends.get(addr ?? "") ?? []).find((x) => words(x.text) === words(q.text) && x.at <= q.at + 5000 && q.at - x.at < 10 * 60_000);
       const mark = { who: "you" as const, at: q.at, waiting: true, waitsFor: "queue" as const, ...(s ? { cid: s.cid } : {}) };
+      // several sent in a row, queued as one: each waits on its own
+      const parts = !s && q.text && !q.images ? sentParts(this.sends.get(addr ?? "") ?? [], q, new Set()) : undefined;
+      if (parts) {
+        parts.forEach((p, n) => messages.push({ id: n ? `${q.id}:c${n}` : q.id, text: p.text, ...mark, cid: p.cid } as Message));
+        continue;
+      }
       if (q.text) messages.push({ id: q.id, text: q.text, ...mark } as Message);
       for (const [n, path] of (s?.files ?? []).entries()) messages.push({ id: `${q.id}:f${n}`, file: { name: path.split("/").pop() ?? "image", path }, ...mark } as Message);
       if (!s && q.images) messages.push({ id: `${q.id}:n`, images: q.images, ...mark } as Message);
@@ -792,6 +833,9 @@ export class Compat {
     const cards = messages.some((m) => (m.question && !m.question.closed) || m.secret);
     const under = st === "working" ? { doing: CV.doingWords(reader.conv, report) ?? "", ...(reader.conv?.waiting ? { waits: true } : {}) }
       : st === "blocked" && !cards ? { blocked: report.replace(/^answer:\s*/i, "") } : {};
+    // its turn is over but work of its own still runs in the background (core/send.js atRest): a quiet note under its
+    // last message, never the typing sign
+    const bgNote = st === "done" || st === "idle" ? CV.backgroundWords(t?.status?.bg) : null;
     // a note under the conversation (a lost session being started again: service/watch.ts)
     const note = addr ? watch?.notes?.get(addr)?.text : undefined;
     // instead of the conversation, the window's notice: still opening, not a chat agent, its log not found, ended
@@ -801,6 +845,6 @@ export class Compat {
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;
     const failed = failedOf(addr);
-    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" || reader.kind === "antigravity" ? reader.kind : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
+    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(bgNote && !notice ? { bgNote } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" || reader.kind === "antigravity" ? reader.kind : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
   }
 }

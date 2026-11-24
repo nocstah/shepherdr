@@ -7,6 +7,8 @@ import { GIVE_UP } from './uploads.ts'
 export interface Outgoing {
   /** the screen's own id for it: the message comes back with it */
   cid: string
+  /** how it was written, for personal analytics (never its words) */
+  how?: 'typed' | 'dictated' | 'bubble' 
   chat: string
   text: string
   /** id: the box's own (its picture on this screen, send.ts localOf) */
@@ -75,6 +77,8 @@ const KEEP_WAITING = 30 * 60_000
  *  answers, the tasks it mentions: core/send.js messageBody), whitespace as one space */
 export const words = (s: string) =>
   s
+    // a command's `! ls` comes back as `!ls`
+    .replace(/^\s*!\s+/, '!')
     .replace(/^\s*<hc\b[^>]*\/>\s*$/gm, '')
     .replace(/^\s*<hc task=[^\n]*<\/hc>\s*$/gm, '')
     .replace(/\s+/g, ' ')

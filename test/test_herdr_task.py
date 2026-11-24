@@ -923,6 +923,23 @@ class BackToWork(unittest.TestCase):
         with open(ghnews.__file__) as f:
             self.assertIn("add one small fix-forward task at once", f.read())
 
+    def test_suggested_replies_hard_limit(self):
+        """SHEP-463: every agent is told a suggested reply is at most 30 characters (what a phone's bubble holds, the
+        web app's SUGGEST_CHARS), short but complete; an unedited old worker default gets today's."""
+        from herdr_task import templates
+        texts = {}
+        for name in ("worker.md", "assistant.md"):
+            with open(os.path.join(ROOT, "templates", name)) as f:
+                texts[name] = f.read()
+        for words in (templates.WORKER_MD, *texts.values()):
+            self.assertIn(templates.LIMIT_RULE, words)
+            self.assertNotIn("under about 40 characters", words)
+            self.assertIn('never a bare "1"', words)
+        self.assertIn("at most 30 characters", templates.LIMIT_RULE)
+        self.assertIn(templates.WORKER_MD_BEFORE_LIMIT, templates.OLD_WORKERS)
+        with open(os.path.join(ROOT, "web", "shared", "suggest.ts")) as f:
+            self.assertIn("export const SUGGEST_CHARS = 30\n", f.read())
+
     def test_later_rounds_review_only_the_new_change(self):
         """#1116: a later review round reviews only what changed since the last reviewed commit, its reviewer splits
         must-fix from follow-up, and only must-fix findings cost a round; unedited old templates get today's."""
@@ -10518,3 +10535,42 @@ class AntigravityAgent(unittest.TestCase):
         # its result came (a GENERIC record): nothing open, its own words then
         self.assertEqual(reason(rows + [{"type": "GENERIC", "content": "2 notes.txt"}], kind="permission", msg="Approve Bash: ls"), "Run: ls")
         self.assertEqual(self.agents.agy_call({"name": "edit_file", "args": {"Path": "/w/a.py", "Target": "x"}}), ("Edit", {"file_path": "/w/a.py"}))
+
+
+class BackgroundWorkIsNoTurn(unittest.TestCase):
+    """A Claude Code whose turn ended but whose background shell still runs says "working · 1 shell still running":
+    herdr-task reads it at rest (base.at_rest), so its task isn't Working by that alone (own_work decides) and idle
+    or done detection sees it quiet."""
+
+    def setUp(self):
+        sys.path.insert(0, BIN)
+        import herdr_task.base as base
+        self.base = base
+
+    def test_at_rest(self):
+        at_rest = self.base.at_rest
+        for m in ("1 shell still running", "2 shells still running", "1 shell and 1 agent still running"):
+            self.assertEqual(at_rest({"app": "claude-code", "state": "working", "msg": m}), {"app": "claude-code", "state": "done", "bg": m})
+        for m in ("Running hc ls", "Waiting for 1 background agent to finish", None):
+            self.assertEqual(at_rest({"state": "working", "msg": m})["state"], "working")
+        self.assertEqual(at_rest({"state": "blocked", "msg": "1 shell still running"})["state"], "blocked")
+        self.assertEqual(at_rest("working"), "working")
+
+    def test_hc_json(self):
+        from unittest import mock
+        records = {"t1": {"address": "t1", "state": "live", "status": {"app": "claude-code", "state": "working", "msg": "1 shell still running"}},
+                   "t2": {"address": "t2", "state": "live", "status": {"app": "claude-code", "state": "working", "msg": "Running npm test"}}}
+        ls = {"terminals": [{"address": "t1", "agent": "claude-code", "state": "live", "status": "working"},
+                            {"address": "t2", "agent": "claude-code", "state": "live", "status": "working"},
+                            {"address": "t3", "agent": "codex", "state": "live", "status": "working"}]}
+        asked = []
+
+        def raw(*args):
+            asked.append(args)
+            return json.loads(json.dumps(ls)) if args[0] == "ls" else json.loads(json.dumps(records.get(args[1])))
+        with mock.patch.object(self.base, "_hc_raw", raw):
+            self.assertEqual([k["status"] for k in self.base.hc_json("ls")["terminals"]], ["done", "working", "working"])
+            self.assertEqual(self.base.hc_json("get", "t1")["status"], {"app": "claude-code", "state": "done", "bg": "1 shell still running"})
+            self.assertEqual(self.base.hc_json("get", "t2")["status"]["state"], "working")
+        # only the working Claude Codes are read in full, never the Codex one
+        self.assertNotIn(("get", "t3"), asked)
