@@ -1465,6 +1465,8 @@ export interface CatalogAgent {
   installed: boolean
   /** why it can't be picked there, when it is missing */
   why?: string
+  /** false: it runs tasks and reviews, but no chat (an Assistant) yet; greyed where a chat's agent is picked */
+  chats?: boolean
   models: CatalogModel[]
   /** the effort levels it has (none: no Effort switch) */
   efforts: string[]

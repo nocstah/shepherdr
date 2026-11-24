@@ -115,7 +115,7 @@ export const Meter = ({ pct }: { pct: number }) => (
 )
 
 /** an agent's logo: its own where the app has one, else its first letters */
-const LOGOS: Record<string, string> = Object.fromEntries(Object.entries({ claude: 'claude', codex: 'codex', opencode: 'opencode', pi: 'pi', droid: 'droid', amp: 'amp', cline: 'cline', 'copilot-cli': 'copilot', 'cursor-agent': 'cursor', 'gemini-cli': 'gemini', goose: 'goose', 'grok-build': 'grok', 'kilo-code': 'kilocode', kiro: 'kiro', 'qwen-code': 'qwen' }).map(([id, icon]) => [id, `agents/${icon}.svg`]))
+const LOGOS: Record<string, string> = Object.fromEntries(Object.entries({ claude: 'claude', codex: 'codex', antigravity: 'antigravity', opencode: 'opencode', pi: 'pi', droid: 'droid', amp: 'amp', cline: 'cline', 'copilot-cli': 'copilot', 'cursor-agent': 'cursor', 'gemini-cli': 'gemini', goose: 'goose', 'grok-build': 'grok', 'kilo-code': 'kilocode', kiro: 'kiro', 'qwen-code': 'qwen' }).map(([id, icon]) => [id, `agents/${icon}.svg`]))
 export function Logo({ agent, name }: { agent: string; name?: string }) {
   const src = LOGOS[agent]
   // a logo that can't load leaves nothing, never an empty square's gap (the message box's + then the model)

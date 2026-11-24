@@ -293,7 +293,7 @@ const readDefaults = async () => {
   try {
     let check: any = {};
     try { check = JSON.parse(readFileSync(where()["cli-check"], "utf8"))?.machines?.[""] ?? {}; } catch {}
-    settings.choices = SC.choicesFrom(await compat.agents!.ownDefaults(), { claude: check.claude !== "missing", codex: check.codex !== "missing" });
+    settings.choices = SC.choicesFrom(await compat.agents!.ownDefaults(), { claude: check.claude !== "missing", codex: check.codex !== "missing", antigravity: check.antigravity !== "missing" });
     model.rebuild();
   } catch {}
 };
@@ -698,7 +698,7 @@ async function doAction(body: any): Promise<Response> {
     try {
       let check: any = {};
       try { check = JSON.parse(readFileSync(where()["cli-check"], "utf8"))?.machines?.[machine ?? ""] ?? {}; } catch {}
-      return json({ ok: true, catalog: catalogOf(machine ?? me?.host ?? "", (await compat.agents!.choices(machine)) as any[], { claude: check.claude !== "missing", codex: check.codex !== "missing" }) });
+      return json({ ok: true, catalog: catalogOf(machine ?? me?.host ?? "", (await compat.agents!.choices(machine)) as any[], { claude: check.claude !== "missing", codex: check.codex !== "missing", antigravity: check.antigravity !== "missing" }) });
     } catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
   // a screen's own actions: Take over, Hand back (or "I'm done"), Skip, a screenshot kept, Open on the desktop instead
@@ -809,7 +809,7 @@ async function doAction(body: any): Promise<Response> {
       if (home && (home[1] === "makehome" || value === "on")) await store.set("home.makereq", { machine: home[2] === "local" ? null : home[2], at: Date.now() });
       if (home?.[1] === "makehome") return json({ ok: true });
       // Extra flags (#1222): herdr-task checks them and says how it keeps them (a list); "none": none, empty: the level above's
-      const fl = /^tasks\.(claude|codex)_flags$/.exec(body.key);
+      const fl = /^tasks\.(claude|codex|antigravity)_flags$/.exec(body.key);
       if (fl && value !== null) value = /^\s*none\s*$/i.test(value) ? "[]" : value.trim() ? JSON.stringify(await checkFlags(fl[1], value)) : null;
       // Base branch: checked before it's saved, here or on origin as git last fetched it
       if (body.key === "tasks.base" && value?.trim()) {

@@ -36,7 +36,8 @@ export function inFront(k) {
   if (!name) return null;
   if (SHELL.test(name)) return runsCommand(fg?.argv) ? "agent" : "shell";
   const kind = k.labels?.["herdr.agent"];
-  if ((kind === "claude" || kind === "codex") && !name.startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
+  const own = { claude: ["claude"], codex: ["codex"], antigravity: ["agy", "antigravity"] }[kind];
+  if (own && !own.some((p) => name.startsWith(p)) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
   return "agent";
 }
 

@@ -181,7 +181,10 @@ export function setConfig(place: string, key: string, value: unknown, scope?: { 
 const PERM_ABOUT: Record<string, Record<string, string>> = {
   claude: { manual: "Asks before edits and commands", default: "Asks before edits and commands", acceptEdits: "Edits files without asking", plan: "Plans first and changes nothing", auto: "Decides by itself what is safe to run", bypassPermissions: "Never asks" },
   codex: { "read-only": "Reads, and asks before anything else", auto: "Works in the folder, asks before leaving it", full: "Never asks" },
+  antigravity: { acceptEdits: "Edits files without asking, asks before commands", auto: "Decides by itself what is safe to run", plan: "Plans first and changes nothing", bypassPermissions: "Never asks" },
 };
+// The agents that run tasks and reviews but no chat of their own yet (an Assistant): greyed where a chat is picked.
+const NO_CHATS = new Set(["antigravity"]);
 const PERM_LABEL: Record<string, string> = { manual: "Default", bypassPermissions: "Bypass" };
 
 /** A machine's agents and their models, from what each agent's own settings and catalog say there (`choices`: per CLI
@@ -194,6 +197,7 @@ export function catalogOf(machine: string, choices: any[], installed: Record<str
     return {
       id: c.kind, name: c.name, installed: installed[c.kind] !== false,
       ...(installed[c.kind] === false ? { why: "Not installed" } : {}),
+      ...(NO_CHATS.has(c.kind) ? { chats: false } : {}),
       models: (c.models ?? []).map((m: any) => ({ id: m.id, name: m.label ?? m.name ?? m.id, speeds: speeds(m), ...(m.efforts?.length ? { efforts: m.efforts } : {}), ...(m.defaultEffort ? { defaultEffort: m.defaultEffort } : {}) })),
       efforts,
       perms: (c.perms ?? []).map((p: any) => ({ id: p.id, label: PERM_LABEL[p.id] ?? p.label, about: PERM_ABOUT[c.kind]?.[p.id] ?? "" })),
@@ -208,7 +212,7 @@ export function catalogOf(machine: string, choices: any[], installed: Record<str
 
 /* ---------- the plans' use, and the warnings line ---------- */
 
-const PLAN_NAMES: Record<string, string> = { claude: "Claude", codex: "Codex", elevenlabs: "ElevenLabs" };
+const PLAN_NAMES: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity", elevenlabs: "ElevenLabs" };
 
 export function plansOf(snap: Snapshot): Config["plans"] {
   const out: Config["plans"] = [];

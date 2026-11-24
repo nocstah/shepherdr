@@ -205,7 +205,7 @@ function Agents({ snap, place, only }: { snap: Snapshot; place: string; only?: R
     return (
       <SRow key={role} label={<>{name(role)}<Own place={place} own={own(`agents.${role}`)} k={`agents.${role}`} /></>} wrap>
         <span className="val">{sayPick(pick, cat)}</span>
-        <Btn small onClick={() => openPicker({ title, machine, pick, onChange: () => undefined, onClose: (now) => JSON.stringify(now) !== JSON.stringify(pick) && void set(place, `agents.${role}`, now) })}>Change</Btn>
+        <Btn small onClick={() => openPicker({ title, machine, pick, chat: role === 'Chats', onChange: () => undefined, onClose: (now) => JSON.stringify(now) !== JSON.stringify(pick) && void set(place, `agents.${role}`, now) })}>Change</Btn>
       </SRow>
     )
   }

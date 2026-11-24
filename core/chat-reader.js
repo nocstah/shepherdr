@@ -10,9 +10,9 @@ import { starting } from "./screens.js";
 
 export const PAGE = 200;
 export const KEEP = 2000;
-export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
+export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex", antigravity: "antigravity", agy: "antigravity" };
 
-// The CLI a terminal runs, as the chat knows them ("claude", "codex"), else null.
+// The CLI a terminal runs, as the chat knows them ("claude", "codex", "antigravity"), else null.
 export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? null;
 
 export class ChatReader {

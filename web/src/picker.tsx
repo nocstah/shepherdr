@@ -67,7 +67,7 @@ const modelOf = (a: CatalogAgent | undefined, p: Pick & { label?: string | null 
 const SPEEDS: Record<string, string> = { regular: 'Regular', fast: 'Fast', ultrafast: 'Ultra-fast' }
 const speedOf = (p: Pick) => (p.fast === 'ultrafast' ? 'ultrafast' : p.fast ? 'fast' : 'regular')
 const cap = (s: string) => (s === 'xhigh' ? 'Extra high' : s.charAt(0).toUpperCase() + s.slice(1))
-const NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', pi: 'Pi' }
+const NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode', pi: 'Pi' }
 
 /** the words a pick shows: the agent's and model's own names once the catalog has them */
 export function pickWords(p: Pick, cat?: Catalog) {
@@ -145,13 +145,13 @@ export function fitAgentLine(el: HTMLElement) {
 }
 
 /** a dialog's Agent row: what is picked, a chevron; it opens the picker */
-export function AgentField({ title, machine, pick, onChange }: { title: string; machine: string; pick: Pick; onChange: (p: Pick) => void }) {
+export function AgentField({ title, machine, pick, chat, onChange }: { title: string; machine: string; pick: Pick; chat?: boolean; onChange: (p: Pick) => void }) {
   const cat = useCatalog(machine)
   const w = pickWords(pick, cat)
   return (
     <div className="fld">
       <span>Agent</span>
-      <button type="button" className="fake" aria-label={`Agent: ${sayPick(pick, cat).replace(/ · /g, ', ')}. Change`} onClick={() => openPicker({ title, machine, pick, onChange })}>
+      <button type="button" className="fake" aria-label={`Agent: ${sayPick(pick, cat).replace(/ · /g, ', ')}. Change`} onClick={() => openPicker({ title, machine, pick, chat, onChange })}>
         <Logo agent={pick.agent} name={w.agent} />
         <span className="n">
           <b>{w.agent}</b> <span>{[w.model, w.effort.toLowerCase(), w.speed !== 'regular' && SPEEDS[w.speed].toLowerCase(), w.perm.toLowerCase()].filter(Boolean).join(' · ')}</span>
@@ -214,7 +214,7 @@ export function choiceList(f: 'effort' | 'speed' | 'mode', p: Pick, cat?: Catalo
   }
 }
 
-function AgentPicker({ title, machine, start, onChange, close }: { title: string; machine: string; start: Pick; onChange: (p: Pick) => void; close: () => void }) {
+function AgentPicker({ title, machine, start, chat, onChange, close }: { title: string; machine: string; start: Pick; chat?: boolean; onChange: (p: Pick) => void; close: () => void }) {
   const snap = getState().snap
   const cat = useCatalog(machine)
   const [p, setP] = useState<Pick>(start)
@@ -286,7 +286,10 @@ function AgentPicker({ title, machine, start, onChange, close }: { title: string
   }
 
   if (field === 'agent') {
-    const here = (cat?.agents ?? []).filter((x) => x.installed && hit(x.name))
+    // picking a chat's agent: one that runs tasks only (no chat of its own yet) is greyed, saying so
+    const tasksOnly = (x: { chats?: boolean }) => !!chat && x.chats === false
+    const here = (cat?.agents ?? []).filter((x) => x.installed && !tasksOnly(x) && hit(x.name))
+    const only = (cat?.agents ?? []).filter((x) => x.installed && tasksOnly(x) && hit(x.name))
     const not = (cat?.agents ?? []).filter((x) => !x.installed && hit(x.name))
     return (
       <div className="pk">
@@ -313,6 +316,13 @@ function AgentPicker({ title, machine, start, onChange, close }: { title: string
               }}
             />
           ))}
+          {only.map((x) => (
+            <div key={x.id} className="row off">
+              <Logo agent={x.id} name={x.name} />
+              <span className="n">{x.name}</span>
+              <span className="v">Tasks and reviews only</span>
+            </div>
+          ))}
           {not.length > 0 && <div className="lab">Not installed on {mach}</div>}
           {not.map((x) => (
             <div key={x.id} className="row off">
@@ -321,7 +331,7 @@ function AgentPicker({ title, machine, start, onChange, close }: { title: string
               {x.why && <span className="v">{x.why}</span>}
             </div>
           ))}
-          {cat && !here.length && !not.length && <p className="hint" style={{ padding: 8 }}>No agent matches.</p>}
+          {cat && !here.length && !only.length && !not.length && <p className="hint" style={{ padding: 8 }}>No agent matches.</p>}
         </div>
       </div>
     )
@@ -368,10 +378,11 @@ function AgentPicker({ title, machine, start, onChange, close }: { title: string
   )
 }
 
-/** Open the agent picker. `title` says what it sets: "This chat runs on", "Tasks run on", "The new space runs on". */
-export function openPicker(o: { title: string; machine: string; pick: Pick; onChange: (p: Pick) => void; onClose?: (p: Pick) => void }) {
+/** Open the agent picker. `title` says what it sets: "This chat runs on", "Tasks run on", "The new space runs on".
+ *  chat: it picks a chat's agent (an Assistant), so agents that run tasks only are greyed. */
+export function openPicker(o: { title: string; machine: string; pick: Pick; chat?: boolean; onChange: (p: Pick) => void; onClose?: (p: Pick) => void }) {
   let last = o.pick
-  openDialog((close) => <AgentPicker title={o.title} machine={o.machine} start={o.pick} onChange={(p) => { last = p; o.onChange(p) }} close={close} />, { wide: true, bare: true, label: o.title, onClose: () => o.onClose?.(last) })
+  openDialog((close) => <AgentPicker title={o.title} machine={o.machine} start={o.pick} chat={o.chat} onChange={(p) => { last = p; o.onChange(p) }} close={close} />, { wide: true, bare: true, label: o.title, onClose: () => o.onClose?.(last) })
 }
 
 /* ---------- machines and spaces ---------- */

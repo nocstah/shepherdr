@@ -3,7 +3,7 @@
 // web app's Settings say the same. herdr-task reads the file (herdr_task/settings.py: settings_for); its defaults are
 // DEFAULTS there and here.
 // Shared core: the source is core/settings.js; bin/sync-shared copies it into the mods in lib/COPIES.
-import { NAMES, levelName, current, rowFor, menuFor, permAcross, speedName, speedFor } from "./agents.js";
+import { NAMES, KINDS, levelName, current, rowFor, menuFor, permAcross, speedName, speedFor } from "./agents.js";
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
@@ -77,7 +77,8 @@ export const USE_OTHER_CLI = "Use other CLI";
 export const LOADING_AGENTS = "Loading agents…";
 // An unset Reviewer's button: what runs, the other CLI.
 export const otherCliWords = (cli) => `Other CLI (${NAMES[cli] ?? cli})`;
-export const otherCli = (worker) => (worker === "codex" ? "claude" : "codex");
+// Claude Code's other CLI is Codex; Codex's and Antigravity's is Claude Code (herdr-task's OTHER_CLI).
+export const otherCli = (worker) => (worker === "codex" || worker === "antigravity" ? "claude" : "codex");
 // Reactions (herdr-task's reactions.py): every agent (Assistants, task workers, automation runs, agent tabs) reacts to
 // some of your messages with an emoji; off, none does. Kept as agents.reactions; SHEP-42 kept it as assistant.reactions
 // (upgradeReactions moves it).
@@ -117,7 +118,17 @@ export function feedbackRepo(v) {
   if (!s) return "";
   return /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(s) ? s : null;
 }
-export const BACKUP = { title: "Backup agent", about: "The other CLI takes over a task once when its agent can't go on." };
+export const BACKUP = { title: "Backup agent", about: "The other CLI takes over a task once when its agent can't go on, or the CLI you pick." };
+// The Backup agent's row (backup.agent): on (unset: the other CLI), off ("off"), or a CLI by its name ("antigravity"),
+// each installed one offered by its name.
+export const backupOptions = (installed) => ["on", "off", ...KINDS.filter((k) => !installed || installed[k] !== false).map((k) => NAMES[k])];
+export const backupWord = (v) => (v === "off" ? "off" : v && NAMES[v] ? NAMES[v] : "on");
+// A word picked on that row as kept: "off", a CLI's key, or null for on (the other CLI); undefined for none of them.
+export function backupValue(word) {
+  if (word === "on") return null;
+  if (word === "off") return "off";
+  return KINDS.find((k) => k === word || NAMES[k] === word);
+}
 // The machines where the other CLI can't take over (herdr-task's check, ~/.local/state/shepherdr/cli-check.json's machines: this
 // computer is ""), in one line. m: the scope's machine ("local" or its name), null for Everywhere (every machine).
 export function backupProblem(checks, m, cli) {
@@ -137,9 +148,10 @@ export function modelLabel(menus, sel) {
 }
 // What the agents offer, from each CLI's own settings (agents.js parseDefaults) and which are installed:
 // { menus, permDefault, defaults } (defaults: the first installed CLI's own, what an unset role runs).
-export function choicesFrom(dflts, installed = { claude: true, codex: true }) {
-  const menus = Object.fromEntries(["claude", "codex"].filter((k) => installed[k]).map((k) => [k, menuFor(k, dflts[k])]));
-  const permDefault = { claude: dflts.claude?.mode ?? "manual", codex: "auto" };
+export function choicesFrom(dflts, installed = { claude: true, codex: true, antigravity: true }) {
+  const menus = Object.fromEntries(KINDS.filter((k) => installed[k]).map((k) => [k, menuFor(k, dflts[k])]));
+  // Antigravity starts in its own mode (auto, unless its settings say another) without --mode
+  const permDefault = { claude: dflts.claude?.mode ?? "manual", codex: "auto", antigravity: "auto" };
   const first = menus.claude ? "claude" : Object.keys(menus)[0] ?? "claude";
   const c = current(first, [], {}, dflts[first]);
   const model = rowFor(first, c) ?? menus[first]?.models?.[0]?.id ?? null;
@@ -219,13 +231,13 @@ export const BRANCH = {
   about: "New tasks' branches. {slug} is the task's title; a name already taken gets -2.",
   pattern: "task/{slug}",
 };
-// Extra flags (tasks.claude_flags, tasks.codex_flags, #1222): a CLI's own launch flags for a space's task agents, such
+// Extra flags (tasks.claude_flags, tasks.codex_flags, tasks.antigravity_flags, #1222): a CLI's own launch flags for a space's task agents, such
 // as --advisor opus. herdr-task checks them (`herdr-task flags`, flags.py: real flags only, none Shepherdr sets) and
 // keeps them one word each (--advisor=opus); a task's own (--flags, --set flags=) replace them.
 export const FLAGS = {
-  rows: [["claude", "Claude Code flags"], ["codex", "Codex flags"]],
+  rows: [["claude", "Claude Code flags"], ["codex", "Codex flags"], ["antigravity", "Antigravity flags"]],
   about: (cli) => `Extra flags for ${cli} when it runs a task, as you'd type them. A task can set its own. Empty: the level above's; "none": no extra flags.`,
-  example: { claude: "--advisor opus", codex: "--search" },
+  example: { claude: "--advisor opus", codex: "--search", antigravity: "--sandbox" },
   none: "none",
 };
 // Flags as one line, quoted only where a shell needs it: ["--advisor=opus", "--name=a b"] -> --advisor=opus '--name=a b'.

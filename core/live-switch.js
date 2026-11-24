@@ -6,7 +6,8 @@
 //   Codex: /model opens a picker (model, then its reasoning level); "s" there applies it to this session only. /fast
 //   and /ultrafast toggle (the active one again: back to Standard) and save service_tier in ~/.codex/config.toml, put
 //   back the same way.
-// Another CLI or another permission mode still needs a restart (liveOK says which).
+// Another CLI or another permission mode still needs a restart (liveOK says which), as any change on Antigravity does
+// (it resumes its conversation: agy --conversation).
 // `io` is where it runs: { send(text), keys(...names), screen(), readFile(rel), writeFile(rel, text), sleep(ms) }, rel
 // under the agent's machine's home.
 
@@ -19,7 +20,7 @@ const LEVEL = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", 
 /** Whether the change from what runs (`from`: { agent, model, effort, fast, perm }) to `to` can happen in place:
  *  the same CLI and the same permission mode. */
 export function liveOK(from, to) {
-  return !!from && !!to && from.agent === to.agent && (!to.perm || !from.perm || to.perm === from.perm);
+  return !!from && !!to && from.agent === to.agent && from.agent !== "antigravity" && (!to.perm || !from.perm || to.perm === from.perm);
 }
 
 /** What changes: { model, effort, fast } (each only when it differs; model/effort '' for the CLI's default; fast

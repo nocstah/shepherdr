@@ -17,7 +17,7 @@ import * as HC from "../core/host.js";
 import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 
 const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, REACTIONS, SUGGESTIONS, FEEDBACK, feedbackRepo, upgradeReactions, BASE, BRANCH, branchPattern, FLAGS, flagWords, MACHINES, OLD_NAMES, SECTIONS,
-  WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, homeAbout, webState, fromWord, LOADING_AGENTS, RESET, machineLabel } = C as any;
+  WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, backupOptions, backupWord, backupValue, homeAbout, webState, fromWord, LOADING_AGENTS, RESET, machineLabel } = C as any;
 const { HOLD } = M as any;
 const TEMPLATES = join(HOME, ".config", "herdr-core", "templates");
 // herdr-task's check of each machine's CLIs (installed, signed in), and its home round (each machine's home space)
@@ -243,13 +243,14 @@ export class Settings {
         agent: { role: r.id, pick: p.value ?? null, sel, unset, other: !s && r.id === "reviewer" && !unset },
         ...(s ? {} : { file: r.file }), ...this.follows(s, p, button, r.id, null) } as SettingRow;
     });
-    // Backup: the other CLI takes over a task once when its agent can't go on (on: unset or a CLI; off: "off"); a
-    // machine where the other CLI can't is one more line under it
+    // Backup: the other CLI takes over a task once when its agent can't go on (on: unset; off: "off"; or a CLI picked by
+    // its name, Antigravity too); a machine where that CLI can't is one more line under it
     const b = this.pick(scope, "backup", "agent");
     const on = b.value !== "off";
     const problem = on ? backupProblem(this.checks, s ? b.machine : null, b.value && b.value !== "off" ? b.value : otherCli(worker)) : "";
-    rows.push({ label: BACKUP.title, key: "backup.agent", value: ON(on), options: ["on", "off"], hint: problem ? `${BACKUP.about}\n${problem}` : BACKUP.about,
-      ...this.follows(s, b, (v) => ON(v !== "off"), "backup", "agent") });
+    const installed = menus ? Object.fromEntries(Object.keys(menus).map((k) => [k, true])) : null;
+    rows.push({ label: BACKUP.title, key: "backup.agent", value: backupWord(b.value), options: backupOptions(installed),
+      hint: problem ? `${BACKUP.about}\n${problem}` : BACKUP.about, ...this.follows(s, b, (v) => backupWord(v), "backup", "agent") });
     // Reactions, for every agent: each reacts to some of your messages with an emoji (herdr-task's reactions.py)
     const re = this.pick(scope, "agents", "reactions");
     rows.push({ label: REACTIONS.title, key: "agents.reactions", value: ON(re.value !== false), options: ["on", "off"], hint: REACTIONS.about,
@@ -445,7 +446,7 @@ export class Settings {
       // a space's own (the service checked the branch is there first); empty: back to the folder's branch
       if (!space) throw new Error("A base branch is set per space.");
       put("tasks", "base", word?.trim() ? word.trim() : null);
-    } else if (key === "tasks.claude_flags" || key === "tasks.codex_flags") {
+    } else if (/^tasks\.(claude|codex|antigravity)_flags$/.test(key)) {
       // herdr-task's own list (service/main.ts asked `herdr-task flags` first); null: back to the level above
       let v: unknown = null;
       if (word !== null && word.trim()) {
@@ -497,10 +498,14 @@ export class Settings {
       if (repo === null) throw new Error(FEEDBACK.bad);
       put("agents", "feedback_repo", repo || null);
     } else if (key === "backup.agent") {
-      // off is "off"; on follows what it would get anyway when that is on, else names the other CLI (as the window's)
+      // off is "off"; a CLI by its name is kept as its key; on follows what it would get anyway when that is on, else names
+      // the other CLI (as the window's)
       const parent = space ? file.everywhere?.backup?.agent ?? null : null;
       const worker = (space ? file.spaces?.[space]?.worker?.agent : null) ?? file.everywhere?.worker?.agent ?? "claude";
-      put("backup", "agent", word === null ? null : word === "off" ? "off" : parent === "off" ? (worker === "codex" ? "claude" : "codex") : null);
+      const v = word === null ? null : backupValue(word);
+      if (v === undefined) throw new Error("Not one of its choices.");
+      const other = otherCli(worker);
+      put("backup", "agent", word === null ? null : v === null ? (parent && parent !== other ? other : null) : v === parent ? null : v);
     } else throw new Error("That setting can't be changed here.");
 
     writeSettings(next);
