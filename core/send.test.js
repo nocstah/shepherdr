@@ -358,3 +358,9 @@ test("inFront: a plain shell, a shell running the agent, the agent, another prog
   expect(inFront({ state: "live" })).toBeNull();
   expect(NOT_TYPED.shell).toContain("nothing was typed");
 });
+
+test("SHEP-1: an Antigravity task's agent in front is agy (or antigravity); another program there is other", async () => {
+  const { inFront } = await import("./send.js");
+  const k = (name) => ({ state: "live", labels: { "herdr.agent": "antigravity" }, foreground: { name, argv: [name] } });
+  expect([inFront(k("agy")), inFront(k("antigravity")), inFront(k("vim"))]).toEqual(["agent", "agent", "other"]);
+});

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Tasks can run on Antigravity, Google's agent, as well as on Claude Code and Codex.
+
+### Tasks
+
+- Pick Antigravity for a task, or for every task in Settings › Agents › Tasks, with its model, effort and permission
+  mode (accept edits, auto, plan or bypass). It shows when Antigravity's `agy` is installed on that machine.
+- A task on Antigravity says Working, Needs you (with the command or question it waits on) and done like the others;
+  Stop, a reply and a restart carry on in its own conversation, and it says ready the same way.
+- Reviews can run on Antigravity too: it reads in plan mode and changes nothing. The Backup agent setting now also
+  takes a CLI by name, Antigravity among them.
+- Chats (the Assistant) stay on Claude Code or Codex for now: their pickers show Antigravity greyed, as tasks and
+  reviews only.
+
 ## 3.2.12
 
 A chat no longer opens as a list of task rows before its messages appear.

@@ -17,7 +17,7 @@ import * as LS from "../core/live-switch.js";
 import * as SC from "../core/settings.js";
 import { spawn } from "./spawn.ts";
 
-const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvFor, sessionOf, NAMES, line, PICKS_FILE, parsePicks, pickKey, withPin, withRecent, speedOf, speedWordOf } = AG as any;
+const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvFor, sessionOf, NAMES, KINDS, line, PICKS_FILE, parsePicks, pickKey, withPin, withRecent, speedOf, speedWordOf } = AG as any;
 /** a chat's speed as kept: false, true (Fast) or "ultrafast" */
 const fastOf = (f: unknown) => (f === "ultrafast" ? "ultrafast" : !!f);
 /** the speeds a CLI's models offer: normal, then fast and ultrafast where one has them (SHEP-258) */
@@ -49,8 +49,30 @@ export class Agents {
   }
 
   private async defaults(kind: string, machine: string | null) {
+    if (kind === "antigravity") return this.agyDefaults(machine);
     const r = await sh(this.hub, DEFAULTS, ["defaults", kind], machine).catch(() => null);
     return parseDefaults(kind, r?.stdout ?? "");
+  }
+  private async readDefaults(kind: string, machine: string | null) {
+    const r = await sh(this.hub, DEFAULTS, ["defaults", kind], machine).catch(() => null);
+    return parseDefaults(kind, r?.stdout ?? "");
+  }
+  /** Antigravity's own settings and model list on a machine: `agy models` asks its server (about 2 s), so a read is
+   *  kept 10 minutes, and an older one is answered at once while it is read again. */
+  private agy = new Map<string, { at: number; value: Promise<any> }>();
+  private agyDefaults(machine: string | null) {
+    const k = machine ?? "", was = this.agy.get(k);
+    if (was && Date.now() - was.at < 10 * 60_000) return was.value;
+    const value = this.readDefaults("antigravity", machine);
+    // a list that came back empty (agy not there, no network) is asked again next time
+    const next = value.then((d: any) => { if (!d?.models?.length) this.agy.delete(k); return d; });
+    this.agy.set(k, { at: Date.now(), value: next });
+    return was ? was.value : next;
+  }
+  /** each CLI's own settings on a machine, by kind */
+  private async allDefaults(machine: string | null): Promise<Record<string, any>> {
+    const got = await Promise.all((KINDS as string[]).map((k) => this.defaults(k, machine)));
+    return Object.fromEntries((KINDS as string[]).map((k, i) => [k, got[i]]));
   }
 
   /** A CLI's own settings on a machine as last read (the chat's model button reads them on every change, as the
@@ -65,17 +87,18 @@ export class Agents {
     return was?.value ?? null;
   }
 
-  /** which of the CLIs are installed on a machine (null: it couldn't be asked, so both are offered) */
+  /** which of the CLIs are installed on a machine (null: it couldn't be asked, so all are offered); Antigravity's is agy,
+   *  or antigravity */
   private have(machine: string | null): Promise<Set<string> | null> {
-    return sh(this.hub, 'for c in "$@"; do command -v "$c" >/dev/null 2>&1 && echo "$c"; done', ["agents", "claude", "codex"], machine)
-      .then((r: any) => new Set(String(r?.stdout ?? "").split("\n").filter(Boolean)), () => null);
+    return sh(this.hub, 'for c in "$@"; do command -v "$c" >/dev/null 2>&1 && echo "$c"; done', ["agents", "claude", "codex", "agy", "antigravity"], machine)
+      .then((r: any) => new Set(String(r?.stdout ?? "").split("\n").filter(Boolean).map((c) => (c === "agy" ? "antigravity" : c))), () => null);
   }
 
   /** What the CLIs on a machine offer a new Assistant (core/settings.js choicesFrom: menus, permission defaults and
    *  the first installed CLI's own defaults), as the window's chat reads it before its first message (loadChoice). */
   private async readOffer(machine: string | null) {
-    const [claude, codex, have] = await Promise.all([this.defaults("claude", machine), this.defaults("codex", machine), this.have(machine)]);
-    const value = (SC as any).choicesFrom({ claude, codex }, { claude: !have || have.has("claude"), codex: !have || have.has("codex") });
+    const [dflts, have] = await Promise.all([this.allDefaults(machine), this.have(machine)]);
+    const value = (SC as any).choicesFrom(dflts, Object.fromEntries((KINDS as string[]).map((k) => [k, !have || have.has(k)])));
     const k = machine ?? "", was = this.offers.get(k)?.value;
     this.offers.set(k, { at: Date.now(), value });
     if (JSON.stringify(was ?? null) !== JSON.stringify(value)) this.onOffer?.();
@@ -99,7 +122,7 @@ export class Agents {
    *  ({ agent, model, effort, fast, perm }), else null: the CLI's own. sel is that with what the machine offers;
    *  words the button's ("GPT-6.2 Sol · High · Ultrafast"). Until the machine's CLIs were read, the pick as it is. */
   fresh(machine: string | null, pick: any) {
-    const offer = this.offer(machine) ?? (SC as any).choicesFrom({}, { claude: true, codex: true });
+    const offer = this.offer(machine) ?? (SC as any).choicesFrom({}, { claude: true, codex: true, antigravity: true });
     const sel = (SC as any).freshSel(pick, offer);
     const m = offer.menus?.[sel.agent]?.models?.find((x: any) => x.id === sel.model) ?? null;
     return { sel, words: (SC as any).modelLabel(offer.menus, sel) as string, label: (m?.name ?? sel.model ?? null) as string | null, effort: (sel.effort ?? m?.defaultEffort ?? null) as string | null };
@@ -121,16 +144,15 @@ export class Agents {
     if (!t) throw new Error("That agent isn't here any more.");
     const machine = addr.includes("/") ? addr.split("/")[0] : null;
     const kind = kindOf(t) ?? reader?.kind ?? "claude";
-    const [claude, codex, have] = await Promise.all([this.defaults("claude", machine), this.defaults("codex", machine), this.have(machine)]);
-    const dflts: any = { claude, codex };
+    const [dflts, have] = await Promise.all([this.allDefaults(machine), this.have(machine)]);
     let meta = reader?.conv?.meta ?? {};
     // a resumed conversation's log names the model it ran on before: until this process writes, its arguments say
     if (t.created_ms && meta.at && meta.at < t.created_ms) meta = { used: meta.used, window: meta.window };
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], meta, dflts[kind]);
     const row = rowFor(kind, c);
-    const menus = Object.fromEntries(["claude", "codex"].filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
+    const menus = Object.fromEntries((KINDS as string[]).filter((k) => k === kind || !have || have.has(k)).map((k) => [k, menuFor(k, dflts[k], k === kind ? row : null)]));
     return { current: { agent: kind, model: row, effort: c.effort ?? null, fast: fastOf(c.fast), perm: c.perm ?? null }, menus,
-      permDefault: { claude: claude?.mode ?? "manual", codex: "auto" }, picks: this.picks(), offline: machine && !(await this.reachable(machine)) ? machine : null };
+      permDefault: { claude: dflts.claude?.mode ?? "manual", codex: "auto", antigravity: "auto" }, picks: this.picks(), offline: machine && !(await this.reachable(machine)) ? machine : null };
   }
 
   /** whether another machine answers now (hc machine ls: connected) */
@@ -140,15 +162,14 @@ export class Agents {
   }
 
   /** Each CLI's own settings here (Settings › Agents' model menu: core/settings.js choicesFrom). */
-  async ownDefaults() {
-    const [claude, codex] = await Promise.all([this.defaults("claude", null), this.defaults("codex", null)]);
-    return { claude, codex };
+  async ownDefaults(): Promise<{ claude?: unknown; codex?: unknown; antigravity?: unknown }> {
+    return this.allDefaults(null);
   }
 
   /** What an unset role runs, in the window's words ("Opus 5.5 · 1M · High"): each CLI's own defaults here. */
   async defaultLines(): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
-    for (const k of ["claude", "codex"]) {
+    for (const k of KINDS as string[]) {
       const d: any = await this.defaults(k, null).catch(() => null);
       if (d) out[k] = line({ agent: k, model: d.model, effort: d.effort ?? d.per?.[String(d.model ?? "").replace(/\[1m\]$/, "")] ?? null, fast: d.fast }).split(" · ").slice(1).join(" · ");
     }
@@ -157,9 +178,9 @@ export class Agents {
 
   /** What each CLI offers on a machine (null: here), as the restart sheet lists them. */
   async choices(machine: string | null) {
-    const [claude, codex] = await Promise.all([this.defaults("claude", machine), this.defaults("codex", machine)]);
-    const dflt: any = { claude, codex };
-    return ["claude", "codex"].map((k) => {
+    const dflt: any = await this.allDefaults(machine);
+    // Antigravity only where agy listed its models (installed and signed in)
+    return (KINDS as string[]).filter((k) => k !== "antigravity" || dflt.antigravity?.models?.length).map((k) => {
       const m = menuFor(k, dflt[k], null);
       // its permission modes, and the one a new agent gets unless picked (the CLI's own: Claude Code's settings mode)
       return { kind: k, name: NAMES[k], models: m.models.map((x: any) => ({ id: x.id, label: x.name, efforts: x.efforts, ...(x.defaultEffort ? { defaultEffort: x.defaultEffort } : {}), ...(x.fast ? { fast: true } : {}), ...(x.ultrafast ? { ultrafast: true } : {}) })),
@@ -173,10 +194,9 @@ export class Agents {
     if (!t) throw new Error("That agent isn't here any more.");
     const machine = addr.includes("/") ? addr.split("/")[0] : null;
     const kind = kindOf(t) ?? "claude";
-    const [claude, codex] = await Promise.all([this.defaults("claude", machine), this.defaults("codex", machine)]);
-    const dflt: any = { claude, codex };
+    const dflt: any = await this.allDefaults(machine);
     const c = current(kind, t.foreground?.argv ?? t.argv ?? [], reader?.conv?.meta ?? {}, dflt[kind]);
-    const clis = ["claude", "codex"].map((k) => {
+    const clis = (KINDS as string[]).filter((k) => k === kind || k !== "antigravity" || dflt.antigravity?.models?.length).map((k) => {
       const m = menuFor(k, dflt[k], k === kind ? c.model : null);
       return { kind: k, name: NAMES[k], models: m.models.map((x: any) => ({ id: x.id, label: x.name, efforts: x.efforts, ...(x.defaultEffort ? { defaultEffort: x.defaultEffort } : {}), ...(x.fast ? { fast: true } : {}), ...(x.ultrafast ? { ultrafast: true } : {}) })),
         speeds: speedsOf(m.models) };
@@ -238,7 +258,7 @@ export class Agents {
     const fg = inFront(t) === "shell" ? null : t.foreground;
     const kind = (fg ? kindOf(t) : null) ?? reader?.kind ?? kindOf(t) ?? "claude";
     // (reader.argv: how an agent that ended ran, from its record: revive())
-    const old = { agent: kind, argv: fg?.argv ?? reader?.argv ?? t.argv ?? [], session: sessionOf(kind, reader?.path ?? null) };
+    const old = { agent: kind, argv: fg?.argv ?? reader?.argv ?? t.argv ?? [], session: sessionOf(kind, reader?.path ?? null) ?? reader?.session ?? null };
     const built = argvFor({ agent: pick.kind, model: pick.model, effort: pick.effort, fast: speedOf(pick.speed), perm: pick.perm ?? current(kind, old.argv, {}, {}).perm }, old);
     const pane = t.labels?.["herdr.chat"] ?? "";
     const task = t.labels?.["herdr.task"];
@@ -270,15 +290,18 @@ export class Agents {
     if (!t) throw new Error("That agent isn't here any more.");
     let rec: any = null;
     try { rec = JSON.parse(t.labels?.["herdr.resume"] || "null"); } catch {}
-    const known = (k: unknown) => (k === "claude" || k === "codex" ? k : null);
+    const known = (k: unknown) => ((KINDS as string[]).includes(k as string) ? (k as string) : null);
     const argv: string[] = Array.isArray(rec?.argv) && rec.argv.length ? rec.argv : t.argv ?? [];
-    const named = (t.argv ?? []).join(" ").match(/(?:^|[\s/])(claude|codex)(?=\s|$)/)?.[1];
+    const word = (t.argv ?? []).join(" ").match(/(?:^|[\s/])(claude|codex|agy|antigravity)(?=\s|$)/)?.[1];
+    const named = word === "agy" ? "antigravity" : word;
     const kind = kindOf(t) ?? known(reader?.kind) ?? known(rec?.kind) ?? known(named) ?? "claude";
     const path = reader?.kind === kind && reader?.path ? reader.path : known(rec?.kind) === kind && typeof rec?.log === "string" && rec.log.startsWith("/") ? rec.log : null;
     const machine = addr.includes("/") ? addr.split("/")[0] : null;
     const c = current(kind, argv, reader?.conv?.meta ?? {}, await this.defaults(kind, machine).catch(() => null));
     const pick = { kind, model: rowFor(kind, c) ?? undefined, effort: c.effort ?? undefined, speed: speedWordOf(c.fast), perm: c.perm ?? undefined };
-    return this.restart(addr, { kind, path, argv }, pick);
+    // Antigravity's record names its conversation before its transcript is written (log null)
+    const session = known(rec?.kind) === kind && typeof rec?.session === "string" ? rec.session : null;
+    return this.restart(addr, { kind, path, argv, session }, pick);
   }
 
   /** restarted on a model: first among the recent ones */

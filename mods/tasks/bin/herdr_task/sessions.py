@@ -1,4 +1,4 @@
-"""Agent sessions: the Claude Code or Codex session a task's agent runs, so it can resume."""
+"""Agent sessions: the Claude Code, Codex or Antigravity session a task's agent runs, so it can resume."""
 
 import json
 import os
@@ -95,11 +95,66 @@ def claude_homes():
     return list(dict.fromkeys(x for x in (os.environ.get("CLAUDE_CONFIG_DIR"), os.path.join(HOME, ".claude")) if x))
 
 
+# Antigravity (agy): its data folder (ANTIGRAVITY_CLI_DATA_DIR, else ANTIGRAVITY_APP_DATA_DIR, else
+# ~/.gemini/antigravity-cli). A running agy holds open a presence lock named after the conversation it shows
+# (presence/<id>.lock), and its conversation's database (conversations/<id>.db); its log is the transcript it writes
+# as it goes (brain/<id>/.system_generated/logs/transcript.jsonl).
+UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+AGY_LOCK = re.compile(rf"^(.*)/presence/({UUID})\.lock$")
+AGY_DB = re.compile(rf"^(.*)/conversations/({UUID})\.db$")
+
+
+def agy_home():
+    """Antigravity's data folder here."""
+    return os.environ.get("ANTIGRAVITY_CLI_DATA_DIR") or os.environ.get("ANTIGRAVITY_APP_DATA_DIR") \
+        or os.path.join(HOME, ".gemini", "antigravity-cli")
+
+
+def agy_log(base, sid):
+    """A conversation's transcript in data folder base, or None until agy wrote it."""
+    f = os.path.join(base, "brain", sid, ".system_generated", "logs", "transcript.jsonl")
+    return f if os.path.isfile(f) else None
+
+
+def agy_session(files):
+    """(conversation id, transcript or None) from the files an agy process holds open: its presence lock, else its
+    conversation's database; several (a subagent's beside its own): the one whose transcript was written last.
+    (None, None) before its first message (no lock yet)."""
+    for pat in (AGY_LOCK, AGY_DB):
+        found = {}
+        for f in files:
+            m = pat.match(f)
+            if m:
+                found.setdefault(m.group(2).lower(), m.group(1))
+        if found:
+            def written(item):
+                log = agy_log(item[1], item[0])
+                return os.path.getmtime(log) if log else 0
+            sid, base = max(found.items(), key=written)
+            return sid, agy_log(base, sid)
+    return None, None
+
+
+def open_files(p):
+    """The paths process p holds open: /proc on Linux, lsof elsewhere (macOS); [] when it can't be told."""
+    files = []
+    fd = f"/proc/{p}/fd"
+    if os.path.isdir(fd):
+        for n in os.listdir(fd):
+            try:
+                files.append(os.readlink(os.path.join(fd, n)))
+            except OSError:
+                pass
+    elif shutil.which("lsof"):
+        files = [l[1:] for l in run(["lsof", "-p", p, "-Fn"]).stdout.split("\n") if l.startswith("n")]
+    return files
+
+
 def session_of(pid):
     """(session id, log path) of the agent process pid (or a child), as core/chat-log.js finds it:
     Claude Code names its session in <its config folder>/sessions/<pid>.json (~/.claude, or the
     process's own CLAUDE_CONFIG_DIR: #1120); Codex holds its rollout open (beside its subagents',
-    which are skipped)."""
+    which are skipped); Antigravity its presence lock (agy_session: its log may not be written yet)."""
     for p in [str(pid)] + kids(pid):
         c = os.path.join(HOME, ".claude")
         if not os.path.isfile(os.path.join(c, "sessions", p + ".json")):
@@ -120,16 +175,10 @@ def session_of(pid):
                         log = f
                         break
                 return sid, log
-        files = []
-        fd = f"/proc/{p}/fd"
-        if os.path.isdir(fd):
-            for n in os.listdir(fd):
-                try:
-                    files.append(os.readlink(os.path.join(fd, n)))
-                except OSError:
-                    pass
-        elif shutil.which("lsof"):
-            files = [l[1:] for l in run(["lsof", "-p", p, "-Fn"]).stdout.split("\n") if l.startswith("n")]
+        files = open_files(p)
+        sid, log = agy_session(files)
+        if sid:
+            return sid, log
         for f in files:
             m = re.search(r"/rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$", f)
             if m and not subagent_rollout(f):
@@ -192,7 +241,7 @@ def _words(content):
 
 def _start(path):
     """(when, first message) a log starts with: Claude Code's first user entry, Codex's session_meta
-    and first user message. (None, "") if it has none in its first lines."""
+    and first user message, Antigravity's first USER_INPUT. (None, "") if it has none in its first lines."""
     at, said = None, ""
     try:
         with open(path, errors="replace") as f:
@@ -209,6 +258,8 @@ def _start(path):
                 elif o.get("type") == "user" and not o.get("isMeta"):
                     at = at or _ms(o.get("timestamp"))
                     said = _words((o.get("message") or {}).get("content"))
+                elif o.get("type") == "USER_INPUT":
+                    at, said = at or _ms(o.get("created_at")), str(o.get("content") or "")
                 elif o.get("type") == "response_item" and p.get("role") == "user":
                     w = _words(p.get("content"))
                     if not w.lstrip().startswith("<"):  # not Codex's own <environment_context> or instructions
@@ -227,6 +278,8 @@ def project_dir(folder, home=None):
 
 def log_by_session(kind, sid):
     import glob
+    if kind == "antigravity":
+        return agy_log(agy_home(), sid)
     if kind == "codex":
         found = glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", f"rollout-*{sid}.jsonl"))
     else:
@@ -239,14 +292,16 @@ def find_log(a, ref, folders, taken=()):
     or None: by its session when it has one, else the earliest log of its kind that started from
     its launch on (until it ended) and whose first message names its task."""
     import glob
-    kind = "codex" if a.get("agent") == "codex" else "claude"
+    kind = a.get("agent") if a.get("agent") in ("codex", "antigravity") else "claude"
     if a.get("session"):
         return log_by_session(kind, a["session"])
     at = a.get("at")
     if not at:
         return None
     end = a.get("ended") or at + 86400000
-    if kind == "codex":
+    if kind == "antigravity":
+        files = glob.glob(os.path.join(agy_home(), "brain", "*", ".system_generated", "logs", "transcript.jsonl"))
+    elif kind == "codex":
         import datetime
         days = {datetime.date.fromtimestamp((at + d) / 1000) for d in (-86400000, 0, 86400000)}
         files = [f for day in days for f in glob.glob(os.path.join(HOME, ".codex", "sessions", f"{day:%Y}", f"{day:%m}", f"{day:%d}", "rollout-*.jsonl"))]

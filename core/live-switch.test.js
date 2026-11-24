@@ -222,3 +222,9 @@ test("Codex's log saying ultrafast reads as Ultrafast", () => {
   expect(liveChanges({ fast: "ultrafast" }, { fast: true })).toEqual({ fast: true, wasFast: "ultrafast" });
   expect(liveChanges({ fast: "ultrafast" }, { fast: "ultrafast" })).toEqual({});
 });
+
+test("SHEP-1: a change on Antigravity is a restart on its own conversation, never typed commands", () => {
+  const from = { agent: "antigravity", model: "gemini-4-neon", effort: "high", fast: false, perm: "auto" };
+  expect(liveOK(from, { ...from, effort: "low" })).toBe(false);
+  expect(liveOK({ ...from, agent: "claude" }, { ...from, agent: "claude", effort: "low" })).toBe(true);
+});

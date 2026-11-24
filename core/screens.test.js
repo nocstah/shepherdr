@@ -37,3 +37,8 @@ describe("a CLI's start screen, read the same by the window and the service", ()
     expect(store.get("t1")[0]).toMatchObject({ state: "answered", how: SCREEN.answered("Yes, proceed") });
   });
 });
+
+test("SHEP-1: Antigravity's terminal is a CLI the start watch and the lost-session check know", async () => {
+  const { cliOf } = await import("./screens.js");
+  expect([cliOf({ status: { app: "antigravity" } }), cliOf({ foreground: { name: "agy" } }), cliOf({ foreground: { name: "agyfoo" } })]).toEqual(["antigravity", "antigravity", null]);
+});

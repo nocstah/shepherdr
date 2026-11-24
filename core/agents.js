@@ -2,7 +2,17 @@
 // rules both the window's model menu (lib/agent.js, mods/chat-models) and the web app's use. Reading an agent's own
 // settings and restarting it run where each side runs commands (lib/agent.js, service/agents.ts).
 // Shared core: the source is core/agents.js; bin/sync-shared copies it into the mods in lib/COPIES.
-export const NAMES = { claude: "Claude Code", codex: "Codex" };
+export const NAMES = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+// Every agent key, in the order menus list them. Antigravity's binary is agy (it installs itself as antigravity too).
+export const KINDS = ["claude", "codex", "antigravity"];
+// The program each key runs, and the names its process shows.
+export const BINS = { claude: "claude", codex: "codex", antigravity: "agy" };
+export const PROGRAMS = { claude: ["claude"], codex: ["codex"], antigravity: ["agy", "antigravity"] };
+// An agent key from a program's name (a path's last part): agy or antigravity is antigravity; null for none of them.
+export function kindOfProgram(word) {
+  const b = String(word ?? "").split("/").pop();
+  return KINDS.find((k) => PROGRAMS[k].includes(b)) ?? null;
+}
 
 // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
 // `match` the names a running agent may report for it.
@@ -14,12 +24,27 @@ const CLAUDE_MODELS = [
   { id: "haiku", name: "Haiku 5.5", match: ["haiku", "claude-haiku-5-5"] },
 ];
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// Antigravity's levels (`agy --help`: --effort low|medium|high|xhigh|max). `agy models` lists each level of a model as
+// its own id (gemini-4-neon-high): a menu shows the model once (gemini-4-neon) with its levels.
+export const AGY_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const AGY_LEVEL = new RegExp(`^(.+)-(${AGY_EFFORTS.join("|")})$`);
+// agy's --mode words for Shepherdr's modes; its own asking default has no flag.
+const AGY_MODES = { acceptEdits: "accept-edits", auto: "auto", plan: "plan" };
+// A model id as agy takes it: { model, effort }, a level in the id its effort (the effort given wins). agy quietly starts
+// on its settings' model when it gets a level's id and an --effort that disagrees.
+export function agyModel(model, effort) {
+  const m = AGY_LEVEL.exec(String(model ?? ""));
+  return m ? { model: m[1], effort: effort || m[2] } : { model: model || null, effort: effort || null };
+}
 // Permission modes as each CLI has them (Claude: --permission-mode, or
 // --dangerously-skip-permissions for full access; Codex: its sandbox and approvals).
 const PERMS = {
   claude: [{ id: "manual", label: "Ask" }, { id: "auto", label: "Auto" }, { id: "acceptEdits", label: "Accept edits" },
     { id: "plan", label: "Plan" }, { id: "bypassPermissions", label: "Full access" }],
   codex: [{ id: "read-only", label: "Read only" }, { id: "auto", label: "Auto" }, { id: "full", label: "Full access" }],
+  // Antigravity: Claude Code's words for what its --mode and --dangerously-skip-permissions mean
+  antigravity: [{ id: "acceptEdits", label: "Accept edits" }, { id: "auto", label: "Auto" }, { id: "plan", label: "Plan" },
+    { id: "bypassPermissions", label: "Full access" }],
 };
 // A permission mode carried to the other agent when the agent is switched: its nearest mode there (auto stays auto,
 // full access stays full access, Claude's accept edits is Codex's auto, plan and read only swap), else that agent's
@@ -27,6 +52,8 @@ const PERMS = {
 const PERM_ACROSS = {
   claude: { "read-only": "plan", auto: "auto", full: "bypassPermissions" },
   codex: { plan: "read-only", auto: "auto", acceptEdits: "auto", bypassPermissions: "full" },
+  // Claude's ask is Antigravity's accept edits (it still asks before commands)
+  antigravity: { manual: "acceptEdits", "read-only": "plan", auto: "auto", full: "bypassPermissions" },
 };
 export function permAcross(perm, agent, permDefault) {
   return PERM_ACROSS[agent]?.[perm] ?? (PERMS[agent]?.some((p) => p.id === perm) ? perm : null) ?? permDefault?.[agent] ?? null;
@@ -64,9 +91,16 @@ function overrides(argv) {
 }
 
 // The agent's own settings on its machine: Claude's settings.json, Codex's config.toml and
-// model list. Read once per agent process.
+// model list, Antigravity's settings.json and model list (`agy models`, one "agy<tab>id<tab>name" line each). Read once
+// per agent process.
 export const DEFAULTS = `
-if [ "$1" = claude ]; then
+if [ "$1" = antigravity ]; then
+  f="\${ANTIGRAVITY_CLI_DATA_DIR:-\${ANTIGRAVITY_APP_DATA_DIR:-$HOME/.gemini/antigravity-cli}}/settings.json"
+  command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")"' "$f" 2>/dev/null
+  a=agy; command -v agy >/dev/null 2>&1 || a=antigravity
+  limit=; command -v timeout >/dev/null 2>&1 && limit='timeout 20'
+  command -v "$a" >/dev/null 2>&1 && $limit "$a" models </dev/null 2>/dev/null | tr -d '\\r' | awk -F '\\t' 'NF >= 2 && $1 ~ /^[a-z0-9][a-z0-9._-]*$/ { print "agy\\t" $1 "\\t" $2 }'
+elif [ "$1" = claude ]; then
   f="$HOME/.claude/settings.json"
   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
 else
@@ -83,8 +117,39 @@ function parsePer(text) {
   try { return JSON.parse(text || "{}") ?? {}; } catch { return {}; }
 }
 
+// Antigravity's model list (`agy models`: [id, label] each, a level of a model its own id) as menu rows: one per model,
+// its levels its efforts ("gemini-4-neon-high", "Gemini 4 Neon (High)" → gemini-4-neon, "Gemini 4 Neon", high). A model
+// started without a level runs on its medium one.
+function agyRows(listed) {
+  const rows = new Map();
+  for (const [id, label] of listed) {
+    const m = AGY_LEVEL.exec(id), base = m ? m[1] : id;
+    const r = rows.get(base) ?? { id: base, label: String(label || id).replace(/\s*\((low|medium|high|x-?high|max)\)\s*$/i, ""), efforts: [], fast: false, defaultEffort: null };
+    if (m && !r.efforts.includes(m[2])) r.efforts.push(m[2]);
+    rows.set(base, r);
+  }
+  return [...rows.values()].map((r) => {
+    const efforts = AGY_EFFORTS.filter((e) => r.efforts.includes(e));
+    return { ...r, efforts, defaultEffort: efforts.includes("medium") ? "medium" : efforts[0] ?? null };
+  });
+}
+
 // The agent's own settings, from DEFAULTS' output on its machine.
 export function parseDefaults(kind, stdout) {
+  if (kind === "antigravity") {
+    const listed = [];
+    let model = null;
+    for (const line of (stdout ?? "").split("\n")) {
+      const w = line.split("\t");
+      if (w[0] === "agy" && w[1]) listed.push([w[1], w[2] ?? w[1]]);
+      else if (w[0] === "model") model = w.slice(1).join("\t") || null;
+    }
+    // its settings name the model by its label ("Gemini 4 Neon (XHigh)") or its id
+    const id = model ? listed.find(([i, l]) => i === model || l === model)?.[0] ?? model : null;
+    const { model: base, effort } = id ? agyModel(id) : { model: null, effort: null };
+    const models = listed.length ? agyRows(listed).map((r) => (r.id === base && effort && r.efforts.includes(effort) ? { ...r, defaultEffort: effort } : r)) : null;
+    return { model: base, effort, fast: false, models };
+  }
   const out = {};
   for (const line of (stdout ?? "").split("\n")) {
     const t = line.indexOf("\t");
@@ -113,6 +178,15 @@ export function current(kind, argv, meta, dflt) {
   argv = argv ?? [];
   meta = meta ?? {};
   dflt = dflt ?? {};
+  if (kind === "antigravity") {
+    // the log names the level's id it ran on (gemini-3.8-flash-medium); its arguments the model and level apart
+    const given = meta.model ? agyModel(meta.model, meta.effort) : agyModel(flag(argv, "--model") ?? dflt.model, flag(argv, "--effort") ?? (flag(argv, "--model") ? null : dflt.effort));
+    const mode = flag(argv, "--mode");
+    const perm = argv.includes("--dangerously-skip-permissions") ? "bypassPermissions" : Object.keys(AGY_MODES).find((k) => AGY_MODES[k] === mode) ?? null;
+    const row = dflt.models?.find((m) => m.id === given.model);
+    return { agent: "antigravity", model: given.model, label: row?.label ?? null, perm,
+      effort: given.effort ?? (given.model ? row?.defaultEffort ?? null : null), fast: false, used: meta.used ?? null, window: meta.window ?? null };
+  }
   if (kind === "claude") {
     // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
     const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
@@ -204,6 +278,11 @@ export function menuFor(agent, dflt, current = null) {
     if (current && !models.some((m) => m.id === current)) models.unshift({ id: current, name: modelName(current), efforts: CLAUDE_EFFORTS, defaultEffort: dflt?.effort ?? null, fast: false });
     return { name: NAMES.claude, perms: PERMS.claude, models };
   }
+  if (agent === "antigravity") {
+    const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts ?? [], defaultEffort: m.defaultEffort ?? null, fast: false }));
+    if (current && !all.some((m) => m.id === current)) all.unshift({ id: current, name: current, efforts: AGY_EFFORTS, defaultEffort: null, fast: false });
+    return { name: NAMES.antigravity, perms: PERMS.antigravity, models: all };
+  }
   const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts?.length ? m.efforts : ["low", "medium", "high", "xhigh"],
     defaultEffort: m.defaultEffort ?? dflt?.effort ?? null, fast: m.fast, ...(m.ultrafast ? { ultrafast: true } : {}) }));
   if (current && !all.some((m) => m.id === current)) all.unshift({ id: current, name: current, efforts: ["low", "medium", "high", "xhigh"], defaultEffort: dflt?.effort ?? null, fast: false });
@@ -212,7 +291,8 @@ export function menuFor(agent, dflt, current = null) {
 
 // The levels a model typed by id gets: its agent's usual ones.
 export function typedModel(agent, id) {
-  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : ["low", "medium", "high", "xhigh"], defaultEffort: null, fast: false, typed: true };
+  return { id, name: agent === "claude" ? modelName(id) : id, efforts: agent === "claude" ? CLAUDE_EFFORTS : agent === "antigravity" ? AGY_EFFORTS : ["low", "medium", "high", "xhigh"],
+    defaultEffort: null, fast: false, typed: true };
 }
 
 // The person's picks in the model menus (the window's and the web's alike), in PICKS_FILE under the
@@ -315,10 +395,17 @@ const CLAUDE_VALUE = new Set(["--add-dir", "--mcp-config", "--append-system-prom
 const CODEX_VALUE = new Set(["-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
   "-C", "--cd", "--add-dir", "-i", "--image", "--enable", "--disable", "--local-provider", "--oss"]);
 
-// Where the agent's own word (claude, codex) is in argv: a terminal's argv starts with what launched it (nice,
+// Antigravity's (`agy --help`): flags whose next word is their value; those a restart sets again (what it resumes, its
+// first message, model, level and mode); and its bare ones that are about the session or its mode.
+const AGY_VALUE = new Set(["--add-dir", "--agent", "--log-file", "--project", "--settings", "--model", "--effort", "--mode",
+  "--conversation", "-r", "--resume", "-i", "--prompt-interactive", "--output-format", "--input-format", "--json-schema", "--print-timeout"]);
+const AGY_DROP = new Set(["--model", "--effort", "--mode", "--conversation", "-r", "--resume", "-i", "--prompt-interactive"]);
+const AGY_BARE = new Set(["--continue", "-c", "--dangerously-skip-permissions"]);
+
+// Where the agent's own word (claude, codex, agy) is in argv: a terminal's argv starts with what launched it (nice,
 // sh -c, env, the person's `bash -ic`), whose words are no agent flags (#1001: its -ic was Codex's `-i c`, an image).
 function agentAt(argv) {
-  return argv.findIndex((a, i) => (i === 0 || !String(a).startsWith("-")) && /^(claude|codex)$/.test(String(a).split("/").pop()));
+  return argv.findIndex((a, i) => (i === 0 || !String(a).startsWith("-")) && kindOfProgram(a) !== null);
 }
 
 // The old agent's flags worth keeping (permissions, folders, ...), without what is chosen again
@@ -328,7 +415,13 @@ function kept(kind, argv) {
   const rest = argv.slice(Math.max(agentAt(argv), 0) + 1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (kind === "claude") {
+    if (kind === "antigravity") {
+      if (AGY_BARE.has(a)) continue;
+      if (AGY_DROP.has(a)) { i++; continue; }
+      if ([...AGY_DROP].some((f) => a.startsWith(f + "="))) continue;
+      if (AGY_VALUE.has(a)) { out.push(a, rest[++i]); continue; }
+      if (a.startsWith("-")) out.push(a);
+    } else if (kind === "claude") {
       if (CLAUDE_BARE.has(a)) continue;
       if (CLAUDE_DROP.has(a)) { if (rest[i + 1] && !rest[i + 1].startsWith("-")) i++; continue; }
       if ([...CLAUDE_DROP].some((f) => a.startsWith(f + "="))) continue;
@@ -354,10 +447,11 @@ export function extraFlags(kind, argv) {
   argv = argv ?? [];
   const at = agentAt(argv);
   if (at < 0) return [];
-  const value = kind === "claude" ? new Set([...CLAUDE_VALUE, ...CLAUDE_DROP]) : CODEX_VALUE;
+  const value = kind === "claude" ? new Set([...CLAUDE_VALUE, ...CLAUDE_DROP]) : kind === "antigravity" ? AGY_VALUE : CODEX_VALUE;
   return argv.slice(at + 1).map(String).filter((a, i, rest) => {
     if (!a.startsWith("--") || a === "--" || (i > 0 && value.has(rest[i - 1]))) return false;
     const name = a.split("=")[0];
+    if (kind === "antigravity") return a.includes("=") ? !AGY_DROP.has(name) && name !== "--settings" : !value.has(a) && !AGY_BARE.has(a);
     if (a.includes("=")) return !CLAUDE_DROP.has(name) && !(name === "--config" && /^(model|model_reasoning_effort|service_tier|projects|hooks)[=.]/.test(a.slice(9)));
     return !value.has(a) && !OWN_BARE.has(a);
   });
@@ -380,7 +474,13 @@ function stripSession(kind, argv) {
   let resumed = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (kind === "claude") {
+    if (kind === "antigravity") {
+      if (a === "--conversation" || a === "-r" || a === "--resume") { resumed = true; i++; continue; }
+      if (/^--(conversation|resume)=/.test(a) || a === "--continue" || a === "-c") { resumed = true; continue; }
+      if (a === "-i" || a === "--prompt-interactive") { i++; continue; }
+      if (a.startsWith("--prompt-interactive=")) continue;
+      if (AGY_VALUE.has(a)) { out.push(a, rest[++i]); continue; }
+    } else if (kind === "claude") {
       if (a === "--resume" || a === "-r" || a === "--session-id") { resumed ||= a !== "--session-id"; if (rest[i + 1] && !rest[i + 1].startsWith("-")) i++; continue; }
       if (/^--(resume|session-id)=/.test(a)) { resumed ||= a.startsWith("--resume"); continue; }
       if (a === "--continue" || a === "-c") { resumed = true; continue; }
@@ -405,6 +505,16 @@ export function argvFor(pick, old) {
   // is Codex's full access, never its sandbox
   if (pick.perm) pick = { ...pick, perm: PERM_ACROSS[pick.agent]?.[pick.perm] ?? pick.perm };
   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
+  if (pick.agent === "antigravity") {
+    const a = ["agy", ...flags];
+    const m = agyModel(pick.model, pick.effort);
+    if (m.model) a.push("--model", m.model);
+    if (m.effort) a.push("--effort", m.effort);
+    if (pick.perm === "bypassPermissions") a.push("--dangerously-skip-permissions");
+    else if (AGY_MODES[pick.perm]) a.push("--mode", AGY_MODES[pick.perm]);
+    if (same && old.session) return { argv: [...a, "--conversation", old.session], resume: true, base: a };
+    return { argv: a, resume: false, base: a };
+  }
   if (pick.agent === "claude") {
     const a = ["claude", ...flags];
     if (pick.model) a.push("--model", pick.model);
@@ -430,6 +540,8 @@ export function argvFor(pick, old) {
 
 // The conversation's id, from its log's file name.
 export function sessionOf(kind, path) {
+  // Antigravity's log is brain/<conversation id>/.system_generated/logs/transcript.jsonl
+  if (kind === "antigravity") return /\/brain\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\//.exec(path ?? "")?.[1] ?? null;
   const m = kind === "claude" ? /([0-9a-f-]{36})\.jsonl$/.exec(path ?? "") : /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(path ?? "");
   return m ? m[1] : null;
 }
@@ -437,12 +549,14 @@ export function sessionOf(kind, path) {
 // The same conversation again, after its agent ended (an Assistant's /exit, GitHub #1039): its own flags, model, effort
 // and speed, resuming `session`.
 export function resumeArgv(kind, argv, session) {
-  const out = stripSession(kind, argv)?.out ?? [kind];
+  const out = stripSession(kind, argv)?.out ?? [BINS[kind] ?? kind];
+  if (kind === "antigravity") return [...out, "--conversation", session];
   return kind === "claude" ? [...out, "--resume", session] : [out[0], "resume", ...out.slice(1), session];
 }
 
-// A copy of the conversation in a new tab beside this one, through the CLI's own fork.
+// A copy of the conversation in a new tab beside this one, through the CLI's own fork (null: Antigravity has none).
 export function forkArgv(kind, argv, session) {
+  if (kind === "antigravity") return null;
   argv = argv ?? [];
   // The same model, effort and speed as the original.
   const same = kind === "claude"
@@ -459,7 +573,7 @@ export function forkArgv(kind, argv, session) {
 // #1050: a fork of a task's conversation while the task's agent runs works in the same folder, so two agents would
 // edit one worktree. The task's live agent (a terminal record from `all`, reviewers and helpers aside) when `t` is a
 // task's terminal, else null: the fork then asks first (FORK_LIVE).
-const AGENT_APPS = new Set(["claude-code", "claude", "codex"]);
+const AGENT_APPS = new Set(["claude-code", "claude", "codex", "agy", "antigravity"]);
 export function liveTaskAgent(t, all) {
   const task = t?.labels?.["herdr.task"];
   if (!task) return null;

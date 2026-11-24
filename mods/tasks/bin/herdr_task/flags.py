@@ -84,8 +84,32 @@ CODEX_KEYS = {"model": f"{_SET} model: use --model", "model_reasoning_effort": f
               "approval_policy": _PERM, "projects": "Shepherdr trusts the task's folder itself",
               "hooks": "Shepherdr sets the chat's question card's hook itself"}
 
-TABLES = {"claude": (CLAUDE, CLAUDE_SHORT, CLAUDE_REFUSED), "codex": (CODEX, CODEX_SHORT, CODEX_REFUSED)}
-NAMES = {"claude": "Claude Code", "codex": "Codex"}
+# Antigravity: `agy --help` (1.5.16).
+AGY = {"--add-dir": MANY, "--agent": ONE, "--log-file": ONE, "--new-project": N, "--project": ONE, "--remote-control": N,
+       "--sandbox": N}
+AGY_SHORT = {"-c": "--continue", "-r": "--conversation", "-i": "--prompt-interactive", "-p": "--print", "-h": "--help"}
+_MODE = "Shepherdr sets the mode from Settings › Agents (Task agent)"
+AGY_REFUSED = {
+    "--model": f"{_SET} model: use --model (or --set model=...)",
+    "--effort": f"{_SET} effort: use --effort (or --set effort=...)",
+    "--mode": _MODE, "--dangerously-skip-permissions": _MODE + ": pick Full access there",
+    "--settings": "Shepherdr passes its own --settings (the task's folder trusted, its own commands allowed): put settings in "
+                  "Antigravity's settings.json",
+    "--conversation": "Shepherdr resumes the task's own session itself", "--resume": "Shepherdr resumes the task's own session itself",
+    "--continue": "Shepherdr resumes the task's own session itself",
+    "--prompt-interactive": "Shepherdr gives the agent its brief itself",
+    "--remote-agent": "the agent works here, not with remote agents",
+    "--print": "a task's agent is interactive (it would answer once and exit)",
+    "--prompt": "a task's agent is interactive (it would answer once and exit)",
+    "--help": "it exits before the agent starts", "--version": "it exits before the agent starts",
+    **{f: _PRINT for f in ("--output-format", "--input-format", "--json-schema", "--print-timeout", "--disable-slash-commands")},
+}
+
+TABLES = {"claude": (CLAUDE, CLAUDE_SHORT, CLAUDE_REFUSED), "codex": (CODEX, CODEX_SHORT, CODEX_REFUSED),
+          "antigravity": (AGY, AGY_SHORT, AGY_REFUSED)}
+NAMES = {"claude": "Claude Code", "codex": "Codex", "antigravity": "Antigravity"}
+# The binary each agent key runs (its --help says the flags a newer one has).
+BINS = {"antigravity": "agy"}
 
 _help = {}
 
@@ -96,9 +120,10 @@ def help_flags(agent):
     if agent in _help:
         return _help[agent]
     out = {}
-    if shutil.which(agent):
+    exe = BINS.get(agent, agent)
+    if shutil.which(exe):
         try:
-            text = subprocess.run([agent, "--help"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10).stdout
+            text = subprocess.run([exe, "--help"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10).stdout
         except (OSError, subprocess.SubprocessError):
             text = ""
         # "  -n, --name <name>   ...", "  --allowedTools, --allowed-tools <tools...>", "      --search", "  -d, --debug [filter]"
@@ -113,7 +138,7 @@ def help_flags(agent):
 def parse(agent, given):
     """The flags `given` (a shell line or a list of words) for agent's CLI, normalized; Fail says what's wrong."""
     if agent not in TABLES:
-        raise Fail(f"Extra flags are for Claude Code and Codex, not {agent}.")
+        raise Fail(f"Extra flags are for Claude Code, Codex and Antigravity, not {agent}.")
     known, short, refused = TABLES[agent]
     if isinstance(given, str):
         try:

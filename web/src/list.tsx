@@ -226,7 +226,7 @@ export function newSpaceDialog(machine?: string, pre?: { name: string; folder: s
             <span>Folder</span>
             <input className="inp" name="folder" value={folder} placeholder={name.trim() ? `~/dev/${name.trim().replace(/^#\s*/, '')}` : '~/dev/docs'} autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(e) => setFolder(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void ok()} />
           </label>
-          <AgentField title="The new space runs on" machine={m} pick={pick ?? pickFor(snap, 'all', 'Chats')} onChange={setPick} />
+          <AgentField title="The new space runs on" chat machine={m} pick={pick ?? pickFor(snap, 'all', 'Chats')} onChange={setPick} />
           <div className="acts">
             <Btn onClick={close}>Cancel</Btn>
             <Btn kind="pri" disabled={busy} onClick={() => void ok()}>Create</Btn>

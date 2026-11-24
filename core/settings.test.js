@@ -115,3 +115,18 @@ test("a fresh chat starts on the choice when its agent is on offer there, else o
   // Codex isn't installed there: the defaults, as the start falls back to the template's own
   expect(S.freshSel(sol, S.choicesFrom({ claude: {} }, { claude: true, codex: false })).agent).toBe("claude");
 });
+
+test("SHEP-1: Antigravity's other CLI is Claude Code, and the Backup agent can be any installed CLI by name", () => {
+  expect([S.otherCli("claude"), S.otherCli("codex"), S.otherCli("antigravity")]).toEqual(["codex", "claude", "claude"]);
+  expect(S.backupOptions({ claude: true, codex: true, antigravity: true })).toEqual(["on", "off", "Claude Code", "Codex", "Antigravity"]);
+  expect(S.backupOptions({ claude: true, codex: false, antigravity: false })).toEqual(["on", "off", "Claude Code"]);
+  expect([S.backupWord(null), S.backupWord("off"), S.backupWord("antigravity")]).toEqual(["on", "off", "Antigravity"]);
+  expect([S.backupValue("on"), S.backupValue("off"), S.backupValue("Antigravity"), S.backupValue("antigravity"), S.backupValue("Gemini")]).toEqual([null, "off", "antigravity", "antigravity", undefined]);
+  const c = S.choicesFrom({ claude: {}, antigravity: { model: "gemini-4-neon", effort: "high", models: [{ id: "gemini-4-neon", label: "Gemini 4 Neon", efforts: ["low", "high"], defaultEffort: "high" }] } },
+    { claude: false, codex: false, antigravity: true });
+  expect(Object.keys(c.menus)).toEqual(["antigravity"]);
+  // an unset role (an Assistant's too) never falls on Antigravity, alone or not: herdr-task runs Claude Code then
+  expect(c.defaults.agent).toBe("claude");
+  expect(S.freshSel(null, c).agent).toBe("claude");
+  expect(S.choicesFrom({ codex: { models: [] } }, { claude: false, codex: true, antigravity: true }).defaults.agent).toBe("codex");
+});

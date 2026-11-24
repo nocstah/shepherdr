@@ -934,7 +934,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
         <AgentLine
           pick={pick}
           machine={machine}
-          onClick={() => openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })}
+          onClick={() => openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, chat: !thread.task, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })}
         />
         <span className="sp" />
         {registry.boxButtons.map((b, i) => <b.View key={i} thread={thread} setText={setText} />)}

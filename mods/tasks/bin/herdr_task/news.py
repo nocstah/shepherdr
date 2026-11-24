@@ -477,7 +477,9 @@ def chatting(k):
 HELD = os.path.join(STORE, ".held.json")  # {address: [{text, how, at}]}: held_pass sends them
 ESCAPES = re.compile(r"\x1b(?:\[([0-9;:?<=>!]*)[ -/]*([@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\|[()*+][0-9A-Za-z]|.)"
                      r"|[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]|[\r\n]|[^\x1b\x00-\x1f\x7f]+", re.S)
-PROMPT = re.compile(r"^\s*[❯›>]\s")   # Claude Code's input line, Codex's
+# Claude Code's input line, Codex's, Antigravity's (">", bare when empty: else agy's echo of an earlier message above it,
+# "> Please run…", would be taken for words typed)
+PROMPT = re.compile(r"^\s*[❯›>](?:\s|$)")
 RULE = re.compile(r"^\s*[─━]{8,}")     # Claude Code's box edge
 
 
@@ -509,8 +511,8 @@ def screen_raw(address, there=None):
 
 def screen_rows(raw):
     """A repaint's rows: {row: {col: (char, dim)}}. Only what a repaint uses: text, line ends,
-    cursor moves, clears and SGR's dim."""
-    rows, row, col, dim = {}, 0, 0, False
+    cursor moves, clears and SGR's dim; grey text (color 8, as Antigravity draws its input's hint) counts as dim."""
+    rows, row, col, faint, grey = {}, 0, 0, False, False
     for m in ESCAPES.finditer(raw):
         s, op = m.group(0), m.group(2)
         if s[0] == "\x1b":
@@ -518,9 +520,13 @@ def screen_rows(raw):
                 ps, i = (m.group(1) or "0").replace(":", ";").split(";"), 0
                 while i < len(ps):
                     if ps[i] in ("38", "48", "58"):  # a color: 38;5;n or 38;2;r;g;b
+                        if ps[i] == "38":
+                            grey = ps[i + 1:i + 3] == ["5", "8"]
                         i += 3 if ps[i + 1:i + 2] == ["5"] else 5
                         continue
-                    dim = True if ps[i] == "2" else False if ps[i] in ("", "0", "22") else dim
+                    faint = True if ps[i] == "2" else False if ps[i] in ("", "0", "22") else faint
+                    if ps[i] in ("", "0", "39") or re.fullmatch(r"3[0-7]|9[0-7]", ps[i]):
+                        grey = ps[i] == "90"
                     i += 1
             elif op in ("H", "f") and not (m.group(1) or "").startswith("?"):
                 a = (m.group(1) or "").split(";")
@@ -536,7 +542,7 @@ def screen_rows(raw):
         elif s[0] >= " ":
             line = rows.setdefault(row, {})
             for ch in s:
-                line[col] = (ch, dim)
+                line[col] = (ch, faint or grey)
                 col += 1
     return rows
 

@@ -457,7 +457,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     }
     return { ok: true };
   }
-  if (b?.type === "model-pin" && compat.agents && ["claude", "codex"].includes(b.agent) && typeof b.model === "string" && /^[\w.\[\]-]{1,60}$/.test(b.model)) {
+  if (b?.type === "model-pin" && compat.agents && ["claude", "codex", "antigravity"].includes(b.agent) && typeof b.model === "string" && /^[\w.\[\]-]{1,60}$/.test(b.model)) {
     // the model menu's star: pinned to the top of its agent's list (core/agents.js PICKS_FILE)
     return { ok: true, picks: (compat.agents as any).pin(b.agent, b.model) };
   }
@@ -478,7 +478,10 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     const a = chat(b.chat), reader = compat.reader?.(a);
     if (b.type === "restart-info") return compat.agents.info(a, reader);
     if (b.type === "model-menu") return { ok: true, menu: await (compat.agents as any).menu(a, reader) };
-    if (!["claude", "codex"].includes(b.kind)) throw new Error("Pick Claude Code or Codex.");
+    // a task's agent can be Antigravity too; an Assistant only Claude Code or Codex (no Assistant on Antigravity yet)
+    const task = !!(compat as any).terminalsOf?.(a)?.labels?.["herdr.task"];
+    if (!(task ? ["claude", "codex", "antigravity"] : ["claude", "codex"]).includes(b.kind))
+      throw new Error(task ? "Pick Claude Code, Codex or Antigravity." : "Pick Claude Code or Codex.");
     const opt = (v: unknown) => (typeof v === "string" && /^[\w.\[\]-]{1,60}$/.test(v) ? v : undefined);
     const pick = { kind: b.kind, model: opt(b.model), effort: opt(b.effort), speed: opt(b.speed), perm: opt(b.perm) };
     // the model menu (live): in place when only the model, level or Fast changes; the restart sheet restarts

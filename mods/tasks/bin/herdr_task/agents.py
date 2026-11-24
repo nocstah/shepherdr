@@ -70,6 +70,8 @@ def agent_running(k):
 # agent exited (or that herdr-core gave a fresh shell after losing its program) is still live: a message pasted there
 # runs as a shell command. Only "agent" may be typed into. The same rule is core/send.js inFront().
 RUNTIMES = {"node", "bun", "deno"}  # a CLI run as a script shows its runtime's name
+# The program names each agent runs as: Antigravity is agy, also installed as antigravity.
+PROGRAMS = {"claude": ("claude",), "codex": ("codex",), "antigravity": ("agy", "antigravity")}
 
 
 def front(k):
@@ -85,7 +87,7 @@ def front(k):
     if name in SHELLS:
         return "agent" if runs_command(fg.get("argv")) else "shell"
     kind = (k.get("labels") or {}).get("herdr.agent")
-    if kind in ("claude", "codex") and not name.startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
+    if kind in PROGRAMS and not name.startswith(PROGRAMS[kind]) and name not in RUNTIMES and not name[:1].isdigit():
         return "other"
     return "agent"
 
@@ -364,7 +366,7 @@ def prompted(task, k):
         return True
     since = task.get("ready_at") or 0
     for d in reversed(rows):
-        when = _ms(d.get("timestamp")) if d.get("timestamp") else None
+        when = _ms(stamp(d)) if stamp(d) else None
         if when is not None and when < since:
             return False
         if d.get("isCompactSummary") or d.get("isMeta") or d.get("isVisibleInTranscriptOnly"):
@@ -485,8 +487,8 @@ def log_lines(log, size=262144):
 
 
 def log_tail(log, size=262144):
-    """The last lines of an agent's session log (Claude Code's or Codex's JSONL), parsed; [] when
-    it can't be read. A first line cut in half is left out."""
+    """The last lines of an agent's session log (Claude Code's or Codex's JSONL, Antigravity's transcript), parsed; []
+    when it can't be read. A first line cut in half is left out."""
     out = []
     for raw in log_lines(log, size):
         try:
@@ -503,8 +505,20 @@ def agent_log(task, address=None):
     return a[-1]["log"] if a else None
 
 
+def stamp(d):
+    """A log line's time as it writes it: Claude Code's and Codex's timestamp, Antigravity's created_at."""
+    return d.get("timestamp") or d.get("created_at")
+
+
+# Antigravity wraps what someone wrote in <USER_REQUEST>, with its own tags after it (ADDITIONAL_METADATA...).
+AGY_REQUEST = re.compile(r"<USER_REQUEST>\r?\n?([\s\S]*?)\r?\n?</USER_REQUEST>")
+
+
 def said(d):
-    """An assistant line's words (Claude Code's, or Codex's response item), or None for anything else."""
+    """An assistant line's words (Claude Code's, Codex's response item, Antigravity's PLANNER_RESPONSE), or None for
+    anything else."""
+    if d.get("type") == "PLANNER_RESPONSE":
+        return str(d.get("content") or "").strip()
     msg = d.get("message") if d.get("type") == "assistant" and not d.get("isSidechain") and not d.get("isApiErrorMessage") else None
     if d.get("type") == "response_item" and (d.get("payload") or {}).get("role") == "assistant":
         msg = d["payload"]
@@ -524,6 +538,10 @@ def from_person(d):
             return "\n".join(x.get("text") or "" for x in c if isinstance(x, dict) and x.get("type") == "text")
     if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "user_message":
         return str(d["payload"].get("message") or "")
+    if d.get("type") == "USER_INPUT" and d.get("source") != "SYSTEM":
+        c = str(d.get("content") or "")
+        m = AGY_REQUEST.search(c)
+        return m.group(1) if m else c
     return None
 
 
@@ -581,7 +599,7 @@ def turn_began(task, address=None):
     for d in reversed(log_tail(agent_log(task, address), 131072)):
         if from_person(d) is not None:
             try:
-                return int(datetime.datetime.fromisoformat(str(d.get("timestamp")).replace("Z", "+00:00")).timestamp() * 1000)
+                return int(datetime.datetime.fromisoformat(str(stamp(d)).replace("Z", "+00:00")).timestamp() * 1000)
             except ValueError:
                 return None
     return None
@@ -651,6 +669,36 @@ def permission_words(tool, value, cwd=None):
     return f"Use {m.group(1)}: {m.group(2)}" if m else (f"Use {tool}" if tool else None)
 
 
+# Antigravity's tools in Claude Code's words (what a permission is for): its tool, the argument that names what, and
+# that argument's name in Claude's.
+AGY_TOOLS = {"run_command": ("Bash", "CommandLine", "command"), "read_file": ("Read", "Path", "file_path"),
+             "write_file": ("Write", "Path", "file_path"), "edit_file": ("Edit", "Path", "file_path"),
+             "search_web": ("WebSearch", "query", "query")}
+
+
+def agy_call(call):
+    """(tool, input) of an Antigravity tool call (a PLANNER_RESPONSE's tool_calls item) in Claude Code's words; its
+    ask_question is AskUserQuestion. agy writes some arguments JSON-encoded ("\"npm test\"", its questions' list)."""
+    name = call.get("name")
+    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+
+    def plain(v):
+        if isinstance(v, str) and v[:1] in ('"', "[", "{") and v[-1:] in ('"', "]", "}"):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return v
+        return v
+    if name == "ask_question":
+        qs = plain(args.get("questions"))
+        return "AskUserQuestion", {"questions": [q for q in qs if isinstance(q, dict)] if isinstance(qs, list) else []}
+    if name in AGY_TOOLS:
+        tool, src, dst = AGY_TOOLS[name]
+        v = plain(args.get(src))
+        return tool, ({dst: v} if isinstance(v, str) and v else {})
+    return name, {}
+
+
 def ask_reason(task, address, req=None, kind=None, msg=None):
     """Why a blocked agent waits, in at most LINE_MAX characters: signed out when its own report
     says so (OSC 7501 kind auth); else from the ask Herdr's hook holds (req: Claude's
@@ -664,7 +712,13 @@ def ask_reason(task, address, req=None, kind=None, msg=None):
         tool, value = req.get("tool_name"), req.get("tool_input") if isinstance(req.get("tool_input"), dict) else {}
     if not tool:
         done, pending = set(), None
+        agy = None  # Antigravity: its last response's tool calls, and how many of their results came (GENERIC)
         for d in log_tail(agent_log(task, address), 131072):
+            if d.get("type") == "PLANNER_RESPONSE":
+                calls = [x for x in d.get("tool_calls") or [] if isinstance(x, dict)]
+                agy = [calls, 0] if calls else None
+            elif d.get("type") == "GENERIC" and agy:
+                agy[1] += 1
             c = (d.get("message") or {}).get("content") if d.get("type") in ("assistant", "user") and not d.get("isSidechain") else None
             for x in c if isinstance(c, list) else []:
                 if isinstance(x, dict) and x.get("type") == "tool_result":
@@ -682,6 +736,8 @@ def ask_reason(task, address, req=None, kind=None, msg=None):
                 done.add(p.get("call_id"))
         if pending and pending.get("id") not in done:
             tool, value = pending.get("name"), pending.get("input") if isinstance(pending.get("input"), dict) else {}
+        elif agy and agy[1] < len(agy[0]):
+            tool, value = agy_call(agy[0][agy[1]])
     if tool == "ExitPlanMode":
         return REASONS["plan"]
     if tool in ("AskUserQuestion", "request_user_input"):

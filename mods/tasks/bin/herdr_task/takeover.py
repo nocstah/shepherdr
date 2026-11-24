@@ -21,30 +21,35 @@ CHECK = r"""
 limit=; if command -v timeout >/dev/null 2>&1; then limit='timeout 10'; fi
 if command -v claude >/dev/null 2>&1; then echo "claude=$($limit claude auth status </dev/null 2>/dev/null | grep -o '"loggedIn": *[a-z]*' | head -n 1)"; else echo claude=missing; fi
 if command -v codex >/dev/null 2>&1; then echo "codex=$($limit codex login status </dev/null 2>&1 | grep -iE '^(not )?logged in' | head -n 1)"; else echo codex=missing; fi
+a=agy; command -v agy >/dev/null 2>&1 || a=antigravity
+if command -v "$a" >/dev/null 2>&1; then echo "antigravity=$($limit "$a" models </dev/null 2>&1 | grep -m 1 -iE "$(printf '\t')|sign ?in|log ?in|not (signed|logged)|authenticat")"; else echo antigravity=missing; fi
 """
 # In the login shell agents start in, so its PATH has what mise, nvm or a profile put there.
 LOGIN = 'if command -v bash >/dev/null 2>&1; then exec bash -lc "$1"; else exec sh -lc "$1"; fi'
-NAMES = {"claude": "Claude Code", "codex": "Codex"}
+NAMES = {"claude": "Claude Code", "codex": "Codex", "antigravity": "Antigravity"}
+# The CLIs a machine's check says each of (Antigravity has no status command: its model list answers signed in, and
+# asks to sign in otherwise).
+CLIS = ("claude", "codex", "antigravity")
 
 
 def cli_state(word):
     if word == "missing":
         return "missing"
-    if re.search(r'"loggedIn": *true|^logged in', word or "", re.I):
+    if re.search(r'"loggedIn": *true|^logged in|^[a-z0-9][\w.-]*\t', word or "", re.I):
         return "ready"
-    if re.search(r'"loggedIn": *false|^not logged in', word or "", re.I):
+    if re.search(r'"loggedIn": *false|^not logged in|sign ?in|log ?in|not (signed|logged)|authenticat', word or "", re.I):
         return "signed-out"
     return None
 
 
 def check_machine(machine=None):
-    """{claude, codex: "ready" | "signed-out" | "missing" | None, at}, or None when it couldn't run."""
+    """{claude, codex, antigravity: "ready" | "signed-out" | "missing" | None, at}, or None when it couldn't run."""
     on = ["--on", machine] if machine else []
     r = run(["hc", "exec", *on, "--timeout", "30", "--", "sh", "-c", LOGIN, "x", CHECK])
     words = dict(ln.split("=", 1) for ln in r.stdout.split("\n") if "=" in ln)
     if r.returncode != 0 or not words:
         return None
-    return {"claude": cli_state(words.get("claude", "").strip()), "codex": cli_state(words.get("codex", "").strip()), "at": now()}
+    return {**{k: cli_state(words.get(k, "").strip()) for k in CLIS}, "at": now()}
 
 
 def read_checks():
@@ -78,7 +83,7 @@ def cli_check_pass(report=None, force=False):
         machines[""]["failed"] = now()
     write_checks(d)
     if report is not None and "" in machines:
-        report["cli_check"] = {"": {k: v for k, v in machines[""].items() if k in ("claude", "codex")}}
+        report["cli_check"] = {"": {k: v for k, v in machines[""].items() if k in CLIS}}
     return d
 
 

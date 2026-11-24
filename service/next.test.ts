@@ -97,3 +97,10 @@ test("Up next: it waits for the tasks not done yet, the first by title and the r
   expect(by("APP-11")).toMatchObject({ afterTitle: "Old one" });
   expect(by("APP-11").afterMore).toBeUndefined();
 });
+
+test("SHEP-1: Antigravity is in the picker's lists with its modes' words, greyed only where a chat's agent is picked", () => {
+  const c = catalogOf("mini", [{ kind: "antigravity", name: "Antigravity", models: [{ id: "gemini-4-neon", label: "Gemini 4 Neon", efforts: ["low", "high"], defaultEffort: "high" }],
+    perms: [{ id: "acceptEdits", label: "Accept edits" }, { id: "plan", label: "Plan" }], permDefault: "auto" }], { antigravity: true });
+  expect(c.agents[0]).toMatchObject({ id: "antigravity", installed: true, chats: false, models: [{ id: "gemini-4-neon", name: "Gemini 4 Neon", efforts: ["low", "high"], defaultEffort: "high" }] });
+  expect(c.agents[0].perms.map((p) => p.about)).toEqual(["Edits files without asking, asks before commands", "Plans first and changes nothing"]);
+});
