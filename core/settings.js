@@ -152,7 +152,8 @@ export function choicesFrom(dflts, installed = { claude: true, codex: true, anti
   const menus = Object.fromEntries(KINDS.filter((k) => installed[k]).map((k) => [k, menuFor(k, dflts[k])]));
   // Antigravity starts in its own mode (auto, unless its settings say another) without --mode
   const permDefault = { claude: dflts.claude?.mode ?? "manual", codex: "auto", antigravity: "auto" };
-  const first = menus.claude ? "claude" : Object.keys(menus)[0] ?? "claude";
+  // what an unset role runs, an Assistant's too: Claude Code, else Codex (Antigravity runs tasks and reviews only)
+  const first = ["claude", "codex"].find((k) => menus[k]) ?? "claude";
   const c = current(first, [], {}, dflts[first]);
   const model = rowFor(first, c) ?? menus[first]?.models?.[0]?.id ?? null;
   return { menus, permDefault, defaults: { agent: first, model, effort: c.effort ?? null, fast: false, perm: permDefault[first] } };

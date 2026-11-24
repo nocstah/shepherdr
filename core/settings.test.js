@@ -125,5 +125,8 @@ test("SHEP-1: Antigravity's other CLI is Claude Code, and the Backup agent can b
   const c = S.choicesFrom({ claude: {}, antigravity: { model: "gemini-4-neon", effort: "high", models: [{ id: "gemini-4-neon", label: "Gemini 4 Neon", efforts: ["low", "high"], defaultEffort: "high" }] } },
     { claude: false, codex: false, antigravity: true });
   expect(Object.keys(c.menus)).toEqual(["antigravity"]);
-  expect(c.defaults).toMatchObject({ agent: "antigravity", model: "gemini-4-neon", effort: "high", perm: "auto" });
+  // an unset role (an Assistant's too) never falls on Antigravity, alone or not: herdr-task runs Claude Code then
+  expect(c.defaults.agent).toBe("claude");
+  expect(S.freshSel(null, c).agent).toBe("claude");
+  expect(S.choicesFrom({ codex: { models: [] } }, { claude: false, codex: true, antigravity: true }).defaults.agent).toBe("codex");
 });

@@ -7,7 +7,7 @@ Settings is one window. Open it from the foot of the list. On a phone it is a li
 | Section | What is in it |
 |---|---|
 | General | Theme, Chat width, Motion, and "Alerts on this device": Needs me, Everything or Off. Kept in that browser |
-| Agents | What Chats, Tasks and Reviews run on. Each row opens the picker: Agent, Model, Permissions, Effort, Speed |
+| Agents | What Chats, Tasks and Reviews run on. Each row opens the picker: Agent, Model, Permissions, Effort, Speed. Tasks and Reviews can run on Claude Code, Codex or Antigravity (where `agy` is installed); Chats on Claude Code or Codex |
 | Tasks | Review by a second agent, Merge ("When I mark it as done", "When all checks pass", "Right away"), Proof |
 | Secrets | Add or replace a secret. Agents use it by name and never see it |
 | Machines | Each machine's agents, processor, memory and disk. Add a machine. Open desktop, where a machine has one |
@@ -39,6 +39,11 @@ there in `~/.config/shepherdr/old-instructions.md`, to move into an `AGENTS.md` 
 
 The picker in a message box changes that one chat or task. What new chats and tasks start with is set in Agents.
 
+On Antigravity (`agy`), the picker's models and efforts are the ones `agy models` lists, and its permission modes
+start it with `--mode accept-edits`, `--mode auto`, `--mode plan` or `--dangerously-skip-permissions`. A task's first
+message goes as `-i`; a restart or a reply after its agent ended runs `agy --conversation <its id>`. Its
+conversations are under `$ANTIGRAVITY_CLI_DATA_DIR` (default `~/.gemini/antigravity-cli`).
+
 ## Where they are kept
 
 `~/.config/shepherdr/settings.json` on the serving machine: `everywhere`, `repos[<folder>]` for a repo's task settings
@@ -57,7 +62,7 @@ edits the file, or edit it yourself.
 
 | In the file | What it does |
 |---|---|
-| `backup.agent` | The other agent takes over a task once when its own can't go on; `"off"` turns that off |
+| `backup.agent` | The other agent takes over a task once when its own can't go on; `"off"` turns that off, and a CLI's key (`"claude"`, `"codex"`, `"antigravity"`) names the one |
 | `agents.reactions` | Agents react to some of your messages with an emoji |
 | `agents.suggestions` | Suggested replies: an agent ends its message with one to three replies you can send with a tap, or one per option (up to five) when it asks a question with options |
 | `agents.feedback`, `agents.feedback_repo` | Agents offer once to file a problem with Shepherdr, and where |
@@ -67,7 +72,7 @@ edits the file, or edit it yourself.
 | `tasks.worktree_root` | The folder new task worktrees go in |
 | `tasks.base` | A repo's base branch |
 | `tasks.branch` | The pattern for new task branches (`{slug}`, the title; empty: `task/{slug}`, `-2` when taken; `{n}` and `{key}` still work) |
-| `tasks.claude_flags`, `tasks.codex_flags` | Extra flags for a task's agent |
+| `tasks.claude_flags`, `tasks.codex_flags`, `tasks.antigravity_flags` | Extra flags for a task's agent |
 | `tasks.setup` | A shell command run in each new worktree before its agent starts |
 | `tasks.start_notes`, `tasks.finish_notes` | Steps a task's agent does first and last |
 | `tasks.accept_command` | A shell command run in the repo once a task is Done |

@@ -44,7 +44,7 @@ Tasks, chat, artifacts, voice, reactions, Screens, schedules, the terminal, sear
 
 ### ⚡ Stop briefing every agent yourself
 
-Write what needs doing in a space's chat: Shepherdr makes it a task or several with `herdr-task`, each with a brief and a Settings block that says how it is reviewed and merged. Each agent starts on Claude Code or Codex, in a worktree of its own, the moment it is asked to. Want more control? Ask for it "for later", "after the login fix", or "ask me before merging". Ask for a schedule and it starts tasks on its own, at a time or when something happens, such as a merge.
+Write what needs doing in a space's chat: Shepherdr makes it a task or several with `herdr-task`, each with a brief and a Settings block that says how it is reviewed and merged. Each agent starts on Claude Code, Codex or Antigravity, in a worktree of its own, the moment it is asked to. Want more control? Ask for it "for later", "after the login fix", or "ask me before merging". Ask for a schedule and it starts tasks on its own, at a time or when something happens, such as a merge.
 
 ### 💬 Know when a task needs an answer
 

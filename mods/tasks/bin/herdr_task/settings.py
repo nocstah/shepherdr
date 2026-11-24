@@ -802,6 +802,9 @@ def task_settings(s, t, space=None, argv=None, live=False):
         cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
         if cmd:
             text += f"; start it as `{cmd}`"
+            if who == "antigravity":
+                # agy takes its first message as -i's value, and reports idle once before that turn begins
+                text += " with your prompt right after -i (it says idle once as it starts: an hc wait back at turn 0 waits again)"
         add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd}, rv_by)
         must = sets.get("must_fix") or (k.get("must_fix") if k.get("must_fix") in LEVELS else "major")
         add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else by_layer(s, space, "tasks", "must_fix", must, "major"))

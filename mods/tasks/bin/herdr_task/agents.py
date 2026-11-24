@@ -669,6 +669,36 @@ def permission_words(tool, value, cwd=None):
     return f"Use {m.group(1)}: {m.group(2)}" if m else (f"Use {tool}" if tool else None)
 
 
+# Antigravity's tools in Claude Code's words (what a permission is for): its tool, the argument that names what, and
+# that argument's name in Claude's.
+AGY_TOOLS = {"run_command": ("Bash", "CommandLine", "command"), "read_file": ("Read", "Path", "file_path"),
+             "write_file": ("Write", "Path", "file_path"), "edit_file": ("Edit", "Path", "file_path"),
+             "search_web": ("WebSearch", "query", "query")}
+
+
+def agy_call(call):
+    """(tool, input) of an Antigravity tool call (a PLANNER_RESPONSE's tool_calls item) in Claude Code's words; its
+    ask_question is AskUserQuestion. agy writes some arguments JSON-encoded ("\"npm test\"", its questions' list)."""
+    name = call.get("name")
+    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+
+    def plain(v):
+        if isinstance(v, str) and v[:1] in ('"', "[", "{") and v[-1:] in ('"', "]", "}"):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return v
+        return v
+    if name == "ask_question":
+        qs = plain(args.get("questions"))
+        return "AskUserQuestion", {"questions": [q for q in qs if isinstance(q, dict)] if isinstance(qs, list) else []}
+    if name in AGY_TOOLS:
+        tool, src, dst = AGY_TOOLS[name]
+        v = plain(args.get(src))
+        return tool, ({dst: v} if isinstance(v, str) and v else {})
+    return name, {}
+
+
 def ask_reason(task, address, req=None, kind=None, msg=None):
     """Why a blocked agent waits, in at most LINE_MAX characters: signed out when its own report
     says so (OSC 7501 kind auth); else from the ask Herdr's hook holds (req: Claude's
@@ -682,7 +712,13 @@ def ask_reason(task, address, req=None, kind=None, msg=None):
         tool, value = req.get("tool_name"), req.get("tool_input") if isinstance(req.get("tool_input"), dict) else {}
     if not tool:
         done, pending = set(), None
+        agy = None  # Antigravity: its last response's tool calls, and how many of their results came (GENERIC)
         for d in log_tail(agent_log(task, address), 131072):
+            if d.get("type") == "PLANNER_RESPONSE":
+                calls = [x for x in d.get("tool_calls") or [] if isinstance(x, dict)]
+                agy = [calls, 0] if calls else None
+            elif d.get("type") == "GENERIC" and agy:
+                agy[1] += 1
             c = (d.get("message") or {}).get("content") if d.get("type") in ("assistant", "user") and not d.get("isSidechain") else None
             for x in c if isinstance(c, list) else []:
                 if isinstance(x, dict) and x.get("type") == "tool_result":
@@ -700,6 +736,8 @@ def ask_reason(task, address, req=None, kind=None, msg=None):
                 done.add(p.get("call_id"))
         if pending and pending.get("id") not in done:
             tool, value = pending.get("name"), pending.get("input") if isinstance(pending.get("input"), dict) else {}
+        elif agy and agy[1] < len(agy[0]):
+            tool, value = agy_call(agy[0][agy[1]])
     if tool == "ExitPlanMode":
         return REASONS["plan"]
     if tool in ("AskUserQuestion", "request_user_input"):

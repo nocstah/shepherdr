@@ -10441,3 +10441,40 @@ class AntigravityAgent(unittest.TestCase):
         # its first message is -i's value, never a flag of its own
         self.assertFalse(self.launch.helper_hc([*run[:-1], "--dangerously-skip-permissions", "x"]))
         self.assertFalse(self.launch.helper_hc([*run[:-2], "--dangerously-skip-permissions", "-i", "x"]))
+
+    # agy's bottom: a rule, its input (">" bare when empty, its hint in grey), a rule; above, its echo of earlier messages
+    RULE = "\x1b[0m\x1b[38;5;8m" + "─" * 40 + "\x1b[0m\r\n"
+    ECHO = "\x1b[0m\x1b[1m\x1b[38;5;4m> Please run the shell command `sleep 40`\x1b[0m\r\n\r\n  It printed 2.\r\n\r\n"
+
+    def test_its_input_line(self):
+        from herdr_task import news
+        empty = self.ECHO + self.RULE + "\x1b[0m\x1b[38;5;12m>\x1b[0m\r\n" + self.RULE + "\x1b[0m\x1b[38;5;8m? for shortcuts\x1b[0m"
+        hint = self.ECHO + self.RULE + "\x1b[0m\x1b[38;5;12m>\x1b[0m \x1b[0m\x1b[38;5;8mAccept-edits mode: file edits auto-approved (shift+tab to cycle)\x1b[0m\r\n" + self.RULE
+        typed = self.ECHO + self.RULE + "\x1b[0m\x1b[38;5;12m>\x1b[0m hey there\r\n" + self.RULE
+        # an empty box is nobody typing (never its echo of an earlier message), nor is its grey hint
+        self.assertEqual(news.typed_input(empty), "")
+        self.assertEqual(news.typed_input(hint), "")
+        self.assertEqual(news.typed_input(typed), "hey there")
+        # Claude Code's and Codex's as before: dim is a placeholder, other colours are words
+        self.assertEqual(news.typed_input("❯ \x1b[2mTry \"fix lint\"\x1b[0m\n"), "")
+        self.assertEqual(news.typed_input("› \x1b[38;5;2mgo\x1b[0m on\n"), "go on")
+
+    def test_its_ask_from_its_open_tool_call(self):
+        log = os.path.join(self.root, "transcript.jsonl")
+        rows = [{"type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "<USER_REQUEST>\nCount them\n</USER_REQUEST>"},
+                {"type": "PLANNER_RESPONSE", "content": "", "tool_calls": [
+                    {"name": "run_command", "args": {"CommandLine": "\"wc -l notes.txt\"", "toolSummary": "\"count\""}}]}]
+        from unittest import mock
+
+        def reason(rows, **kw):
+            with open(log, "w") as f:
+                f.writelines(json.dumps(r) + "\n" for r in rows)
+            with mock.patch.object(self.agents, "agent_log", lambda task, address: log):
+                return self.agents.ask_reason({"folder": self.root}, "t1", **kw)
+        self.assertEqual(reason(rows, kind="permission", msg="Approve Bash: /home/x/very/long/path/to/a/tool…"), "Run: wc -l notes.txt")
+        ask = {"type": "PLANNER_RESPONSE", "tool_calls": [{"name": "ask_question", "args": {"questions": json.dumps(
+            [{"is_multi_select": False, "options": ["red", "blue"], "question": "Which colour?"}])}}]}
+        self.assertEqual(reason(rows[:1] + [ask], kind="question"), "Which colour?")
+        # its result came (a GENERIC record): nothing open, its own words then
+        self.assertEqual(reason(rows + [{"type": "GENERIC", "content": "2 notes.txt"}], kind="permission", msg="Approve Bash: ls"), "Run: ls")
+        self.assertEqual(self.agents.agy_call({"name": "edit_file", "args": {"Path": "/w/a.py", "Target": "x"}}), ("Edit", {"file_path": "/w/a.py"}))
