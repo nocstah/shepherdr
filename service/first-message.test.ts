@@ -37,3 +37,20 @@ test("the template folds, the person's first words are their own bubble, no news
   const rows = chat.messages.map((m: any) => (m.news ? `news ${m.news.ref}` : m.brief ? `brief ${m.brief.label}` : `${m.who}: ${m.text}`));
   expect(rows).toEqual(["brief New session", `you: ${asked}`, "agent: Got it.", "you: Name it <project> please"]);
 });
+
+// Antigravity as the Assistant: an Assistant started again on its own conversation (the web's Restart, herdr-task's
+// restart_assistant) runs with no template on its new terminal, and its log still opens with its instructions: they fold
+// into the "New session" row as before the restart, never a message from the person (any agent's resume).
+test("an Assistant resumed on its own conversation keeps its instructions folded", async () => {
+  const c = await conv([user("p0", tpl, 0), said("a0", "I'm ready.", 1), user("p1", "Which branch?", 2), said("a1", "main", 3)]);
+  const compat = new Compat() as any;
+  compat.firstTask = () => null;
+  const rows = (t: any) => compat.chat("p:local:s1", { conv: c, start: 0, machine: null, addr: "t9", kind: "claude" }, t).messages
+    .map((m: any) => (m.brief ? `brief ${m.brief.label}` : `${m.who}: ${m.text}`));
+  const after = ["brief New session", "agent: I'm ready.", "you: Which branch?", "agent: main"];
+  expect(rows({ labels: { "herdr.role": "coordinator", "herdr.agent": "antigravity" } })).toEqual(after);
+  // as it was before the restart, from the template
+  expect(rows({ template: "herdr-assistant-x", labels: { "herdr.role": "coordinator" } })).toEqual(after);
+  // not an Assistant (a plain terminal's chat): its first message is the person's own
+  expect(rows({ labels: {} })[0]).toBe(`you: ${tpl}`);
+});

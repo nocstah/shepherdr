@@ -513,6 +513,15 @@ class SessionNote(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertFalse(asked)
 
+    def test_herdr_tasks_copy_of_its_words_is_the_same(self):
+        """An Antigravity Assistant gets the hook's own words in its first message (it has no such hook):
+        herdr-task's CHAT_NOTE, which must say what the hook says."""
+        import sys
+        sys.path.insert(0, os.path.join(ROOT, "mods", "tasks", "bin"))
+        from herdr_task.assistant_settings import CHAT_NOTE
+        ctx, _ = self.run_hook("coordinator")
+        self.assertEqual(ctx.split(" Reactions (on in Settings):")[0], CHAT_NOTE)
+
 
 class TestsOnAThrowawayHome(unittest.TestCase):
     """SHEP-147: no test reaches the person's real home (its question hook, chat cards, data, herdr-core)."""

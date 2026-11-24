@@ -271,7 +271,7 @@ export class Compat {
     const s = this.spaceList.find((x) => placeKey(x.id) === key);
     if (!s || s.assistant || !(this.agents as any)?.fresh) return null;
     const f = (this.agents as any).fresh(s.machine ?? null, this.assistantPick?.(s.id) ?? null);
-    const kind = f.sel.agent === "codex" ? "codex" : "claude";
+    const kind = f.sel.agent === "codex" || f.sel.agent === "antigravity" ? f.sel.agent : "claude";
     return { key, fresh: true, messages: [], cli: kind, working: false,
       agent: { kind, words: f.words, speed: f.sel.fast === "ultrafast" ? "ultrafast" : f.sel.fast ? "fast" : "normal", ...(f.sel.perm ? { perm: f.sel.perm } : {}), planned: { ...(f.sel.model ? { model: f.sel.model } : {}), ...(f.label ? { modelLabel: f.label } : {}), ...(f.effort ? { effort: f.effort } : {}) } } } as Chat;
   }
@@ -289,7 +289,7 @@ export class Compat {
         const t: any = (this as any).terminalsOf?.(s.assistant);
         let kind: string | null = kindOfTerm(t);
         if (!kind) { try { kind = JSON.parse(t?.labels?.["herdr.resume"] || "{}").kind ?? null; } catch {} }
-        if (!t || (kind !== "claude" && kind !== "codex")) return null;
+        if (!t || (kind !== "claude" && kind !== "codex" && kind !== "antigravity")) return null;
         const { flags: _, ...a } = this.agentNow(kind, t, this.reader?.(s.assistant)?.conv?.meta, s.machine ?? null);
         return a;
       }
@@ -584,7 +584,9 @@ export class Compat {
     // a task's chat: its brief is its first message (SHEP-330), read once its log has it (a finished task's log too,
     // whose terminal is gone)
     const taskRow = this.taskRowOf(key);
-    const template = t?.template ?? null, task = Boolean(t?.labels?.["herdr.task"]) || !!taskRow;
+    // an Assistant started again on its own conversation (restart.sh's resume, herdr-task's restart_assistant: no template
+    // on the new terminal) opened it with its instructions all the same: its first message is that brief, never the person's
+    const template = t?.template ?? (t?.labels?.["herdr.role"] === "coordinator" ? "assistant" : null), task = Boolean(t?.labels?.["herdr.task"]) || !!taskRow;
     let briefShown = false;
     const mentionable = this.tasksFor(key);
     const own = this.chats.get(key);

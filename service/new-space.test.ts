@@ -11,8 +11,11 @@ const BIN = join(APP, "bin"), CALLS = join(APP, "calls");
 mkdirSync(BIN);
 // with a FAIL file: refused as hc refuses a machine its session doesn't have (SHEP-294)
 const FAIL = join(APP, "fail");
+// with a HELD file: started, its first message held on its CLI's start screen (trust this folder)
+const HELD = join(APP, "held");
 writeFileSync(join(BIN, "hc"), `#!/bin/sh\necho "$*" >> "${CALLS}"\necho "session=$HC_SESSION" >> "${CALLS}"
 if [ -e "${FAIL}" ]; then echo '{"error":{"kind":"machine_unknown","message":"unknown machine \\"vmb\\""}}'; exit 4; fi
+if [ -e "${HELD}" ]; then echo '{"address":"t9","first_message":{"sent":false,"reason":"t9 is blocked (permission)"}}'; exit 0; fi
 echo '{"address":"t9"}'\n`, { mode: 0o755 });
 // "vmb"'s home, on this disk: machine.exec runs there
 const VMB = join(APP, "vmb");
@@ -157,4 +160,28 @@ test("with other machines, New space at ~ here opens this computer's own ~ space
   // and found the next time, not a third
   expect(await SP.newSpace(hub, { machine: null, path: "~", others: true, store: s })).toMatchObject({ place: again.place, existed: true, tilde: true });
   expect(s.d.spaces.length).toBe(2);
+});
+
+// Antigravity as the Assistant: a new folder's Assistant on agy stops at "Do you trust the contents of this project?",
+// and hc keeps the template's words without ever sending them: the space gets them to it once it is idle past that
+// screen (held: main.ts's firstWhenIdle), by its address there. Nothing is held: nothing is passed on.
+test("a new space's Assistant held on its start screen gets its instructions once past it", async () => {
+  const tdir = join(VMB, ".config", "herdr-core", "templates");
+  mkdirSync(tdir, { recursive: true });
+  writeFileSync(join(tdir, "assistant.md"), "---\nname: assistant\ndescription: x\ncommand: claude\n---\nYou are the Assistant.\n");
+  const got: [string, string][] = [];
+  // (vmb's templates folder, whatever XDG_CONFIG_HOME this shell has: the hub's exec passes the environment on)
+  const xdg = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = join(VMB, ".config");
+  writeFileSync(HELD, "");
+  try {
+    await SP.newSpace(hub, { machine: "vmb", path: "~/crescendo", store: store(), held: (a, w) => got.push([a, w]) });
+  } finally {
+    rmSync(HELD);
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = xdg;
+  }
+  expect(got).toEqual([["vmb/t9", "You are the Assistant."]]);
+  await SP.newSpace(hub, { machine: "vmb", path: "~/crescendo", store: store(), held: (a, w) => got.push([a, w]) });
+  expect(got.length).toBe(1);
+  rmSync(join(tdir, "assistant.md"));
 });

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Tasks can run on Antigravity, Google's agent, as well as on Claude Code and Codex.
+Tasks and a space's chat can run on Antigravity, Google's agent, as well as on Claude Code and Codex.
 
 ### Tasks
 
@@ -12,8 +12,12 @@ Tasks can run on Antigravity, Google's agent, as well as on Claude Code and Code
   Stop, a reply and a restart carry on in its own conversation, and it says ready the same way.
 - Reviews can run on Antigravity too: it reads in plan mode and changes nothing. The Backup agent setting now also
   takes a CLI by name, Antigravity among them.
-- Chats (the Assistant) stay on Claude Code or Codex for now: their pickers show Antigravity greyed, as tasks and
-  reviews only.
+
+### Chat
+
+- A space's chat can run on Antigravity: pick it from the chat's model button, before its first message or to switch
+  a running one, or for every chat in Settings › Agents › Chats. It starts with its instructions and your settings,
+  gets the news of its tasks and your settings' changes, and a restart goes back to its own conversation.
 
 ## 3.2.12
 

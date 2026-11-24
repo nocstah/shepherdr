@@ -167,6 +167,8 @@ RESTART_GAP_MS = 5 * 60000                          # a failed restart is tried 
 # What says where an Assistant lives (its space, tab or chat), carried to the new one as restart.sh does.
 PLACE_LABELS = ("herdr.space", "herdr.tab", "herdr.coordinator.space", "herdr.coordinator.tab", "herdr.chat",
                 "herdr.chat.slot", "herdr.chat.origin")
+# What its conversation was told of its settings and Reactions (assistant_settings.LABEL, reactions.LABEL).
+TOLD_LABELS = ("herdr.settings", "herdr.reactions")
 
 
 def restart_assistant(k, message):
@@ -202,7 +204,10 @@ def restart_assistant(k, message):
         base = ["hc", "run", "--bg", "--json", "--no-parent", "--cwd", cwd, *keep, *place, "--label", "herdr.role=coordinator"]
         if rec.get("kind") in ("claude", "codex", "antigravity") and rec.get("session") and rec.get("argv"):
             argv = resume_argv(rec["kind"], list(rec["argv"]), rec["session"], message)
-            r = run([*base, "--label", f"herdr.agent={rec['kind']}", "--", *clean_env(argv)])
+            # its own conversation again: what it was told of its settings stays told, so only what changed since is
+            # (Antigravity has no SessionStart hook to tell it again on a resume, as Claude Code's and Codex's do)
+            told = [x for name in TOLD_LABELS if labels.get(name) for x in ("--label", f"{name}={labels[name]}")]
+            r = run([*base, *told, "--label", f"herdr.agent={rec['kind']}", "--", *clean_env(argv)])
         else:
             r = run([*base, "assistant", message])
         try:
