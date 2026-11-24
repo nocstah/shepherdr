@@ -284,3 +284,22 @@ test("SHEP-275: When a task is accepted is a command box under the notes, Everyw
   s.set("tasks.accept_command", null, "sp3", scope);
   expect(JSON.parse(readFileSync(file, "utf8")).repos["/api"].tasks?.accept_command).toBeUndefined();
 });
+
+test("SHEP-1: the Backup agent picks a CLI by name, Antigravity too; Antigravity's extra flags have their row", () => {
+  const s = new Settings();
+  s.start();
+  const C: any = CORE;
+  s.choices = C.choicesFrom({ claude: { model: "opus" }, codex: { models: [] }, antigravity: { models: [{ id: "gemini-4-neon", label: "Gemini 4 Neon", efforts: ["high"] }] } });
+  const row = () => s.sections(null).find((x) => x.name === "Agents" && x.level === "all")!.rows.find((r) => r.key === "backup.agent")!;
+  expect(row()).toMatchObject({ value: "on", options: ["on", "off", "Claude Code", "Codex", "Antigravity"] });
+  s.set("backup.agent", "Antigravity");
+  expect(JSON.parse(readFileSync(file, "utf8")).everywhere.backup).toEqual({ agent: "antigravity" });
+  expect(row().value).toBe("Antigravity");
+  expect(() => s.set("backup.agent", "Gemini")).toThrow("Not one of its choices.");
+  s.set("backup.agent", null);
+  const tasks = s.sections(null).find((x) => x.name === "Tasks" && x.level === "all")!;
+  expect(tasks.rows.find((r) => r.key === "tasks.antigravity_flags")).toMatchObject({ label: "Antigravity flags", placeholder: "--sandbox" });
+  s.set("tasks.antigravity_flags", JSON.stringify(["--sandbox"]));
+  expect(JSON.parse(readFileSync(file, "utf8")).everywhere.tasks.antigravity_flags).toEqual(["--sandbox"]);
+  s.set("tasks.antigravity_flags", null);
+});

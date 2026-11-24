@@ -10289,3 +10289,155 @@ class RepoSettings(unittest.TestCase):
                       self.settings.settings_block(store, t, argv=["claude"], sources=True))
         rows = {x["label"]: x for x in self.settings.task_settings(store, t, argv=["claude"])}
         self.assertEqual((rows["Merge"]["from"], rows["Review"]["from"]), ("repo", "default"))
+
+
+class AntigravityAgent(unittest.TestCase):
+    """SHEP-1: Antigravity (agy) runs a task as Claude Code and Codex do: its model and level, Shepherdr's permission
+    modes in its --mode words, its folder trusted and Shepherdr's own commands allowed for this session only, its first
+    message by -i, its conversation found by its presence lock and resumed with --conversation. Records are synthetic,
+    in the real files' shape."""
+    SID = "0f1e2d3c-4b5a-6978-8a9b-acbdcedfe0f1"
+    OTHER = "11111111-2222-4333-8444-555555555555"
+
+    def setUp(self):
+        sys.path.insert(0, BIN)
+        from herdr_task import agents, flags, launch, machine, revive, sessions, settings, takeover
+        self.agents, self.flags, self.launch, self.machine = agents, flags, launch, machine
+        self.revive, self.sessions, self.settings, self.takeover = revive, sessions, settings, takeover
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root))
+
+    def test_its_argv_from_a_pick(self):
+        argv_for = self.settings.argv_for
+        # a level's own id (as `agy models` lists it) is its model and that level; the level asked for wins
+        self.assertEqual(argv_for({"agent": "antigravity", "model": "gemini-3.8-flash-low", "effort": "high", "perm": "manual"}),
+                         ["agy", "--model", "gemini-3.8-flash", "--effort", "high", "--mode", "accept-edits"])
+        self.assertEqual(argv_for({"agent": "antigravity", "model": "gemini-4-neon-xhigh"}),
+                         ["agy", "--model", "gemini-4-neon", "--effort", "xhigh"])
+        self.assertEqual(argv_for({"agent": "antigravity", "perm": "full"}), ["agy", "--dangerously-skip-permissions"])
+        self.assertEqual(argv_for({"agent": "antigravity", "perm": "read-only"}), ["agy", "--mode", "plan"])
+        # no mode: agy's own (its asking default has no flag)
+        self.assertEqual(argv_for({"agent": "antigravity"}), ["agy"])
+        self.assertEqual(self.settings.agy_model("gemini-pro-orchestrator-neon"), ("gemini-pro-orchestrator-neon", None))
+        for argv in (["agy"], ["/usr/local/bin/agy", "-i", "x"], ["antigravity"]):
+            self.assertEqual(self.settings.agent_key(argv), "antigravity", argv)
+        self.assertEqual(self.settings.OTHER_CLI["antigravity"], "claude")
+
+    def test_its_own_settings_trust_the_folder_and_allow_shepherdrs_commands(self):
+        folder = os.path.join(self.root, "wt")
+        os.makedirs(folder)
+        argv = self.launch.own_argv(["agy", "--model", "m"], folder)
+        self.assertEqual(argv[1], "--settings")
+        own = json.loads(argv[2])
+        self.assertIn(os.path.realpath(folder), [os.path.realpath(p) for p in own["trustedWorkspaces"]])
+        self.assertTrue(any(re.fullmatch(r"command\(\S*herdr-task ready\)", r) for r in own["permissions"]["allow"]), own)
+        self.assertFalse(any(r.startswith("Bash(") for r in own["permissions"]["allow"]))
+        # a --settings of its own is kept and added to, once
+        mine = self.launch.own_argv(["agy", "--settings", json.dumps({"x": 1, "trustedWorkspaces": ["/a"]}), "--model", "m"], folder)
+        kept = json.loads(mine[mine.index("--settings") + 1])
+        self.assertEqual((kept["x"], kept["trustedWorkspaces"][0]), (1, "/a"))
+        self.assertEqual(mine.count("--settings"), 1)
+        self.assertEqual(self.launch.own_argv(mine, folder), mine)
+
+    def test_rules_in_its_words(self):
+        from unittest import mock
+        with mock.patch.object(self.launch, "own_rules", lambda p: [f"Bash({p} ready:*)", "Bash(/x/herdr-browser:*)"]):
+            self.assertEqual(self.launch.agy_rules("/x/herdr-task"), ["command(/x/herdr-task ready)", "command(/x/herdr-browser)"])
+
+    def test_resumed_on_its_own_conversation(self):
+        self.assertEqual(self.launch.resume_argv(["agy", "--model", "m"], self.SID, self.root), ["agy", "--model", "m", "--conversation", self.SID])
+        kind, base = self.revive.base_argv(["nice", "agy", "--model", "m", "--settings", "{}", "--conversation", "old", "-i", "the brief",
+                                            "--add-dir", "/x", "-c"])
+        self.assertEqual((kind, base), ("antigravity", ["agy", "--model", "m", "--settings", "{}", "--add-dir", "/x"]))
+        self.assertEqual(self.revive.resume_argv("antigravity", base, self.SID, "go on"), [*base, "--conversation", self.SID, "-i", "go on"])
+        self.assertEqual(self.revive.resume_argv("antigravity", base, self.SID, None), [*base, "--conversation", self.SID])
+        self.assertEqual(self.revive.kind_of("/opt/bin/antigravity"), "antigravity")
+
+    def data_dir(self):
+        base = os.path.join(self.root, "agy")
+        for sid in (self.SID, self.OTHER):
+            logs = os.path.join(base, "brain", sid, ".system_generated", "logs")
+            os.makedirs(logs)
+            with open(os.path.join(logs, "transcript.jsonl"), "w") as f:
+                f.write(json.dumps({"type": "USER_INPUT", "source": "USER", "created_at": "2026-11-24T10:00:00Z",
+                                    "content": "<USER_REQUEST>\nTask 7: Try it\n</USER_REQUEST>"}) + "\n")
+        os.makedirs(os.path.join(base, "presence"))
+        os.makedirs(os.path.join(base, "conversations"))
+        return base
+
+    def test_its_session_from_its_presence_lock(self):
+        base = self.data_dir()
+        lock = os.path.join(base, "presence", self.SID + ".lock")
+        db = os.path.join(base, "conversations", self.OTHER + ".db")
+        log = os.path.join(base, "brain", self.SID, ".system_generated", "logs", "transcript.jsonl")
+        # the lock names the conversation it shows, before a database it also holds
+        self.assertEqual(self.sessions.agy_session(["/dev/pts/3", db, lock]), (self.SID, log))
+        self.assertEqual(self.sessions.agy_session([db]), (self.OTHER, os.path.join(base, "brain", self.OTHER, ".system_generated", "logs", "transcript.jsonl")))
+        # before its first message: no lock yet
+        self.assertEqual(self.sessions.agy_session(["/dev/null"]), (None, None))
+        # a conversation whose transcript isn't written yet still names its session
+        fresh = "22222222-3333-4444-8555-666666666666"
+        self.assertEqual(self.sessions.agy_session([os.path.join(base, "presence", fresh + ".lock")]), (fresh, None))
+        from unittest import mock
+        with mock.patch.object(self.sessions, "open_files", lambda p: [lock] if p == "4242" else []), \
+                mock.patch.object(self.sessions, "kids", lambda p: []), \
+                mock.patch.object(self.sessions, "own_claude_dir", lambda p: None), \
+                mock.patch.object(self.sessions, "HOME", os.path.join(self.root, "home")):
+            self.assertEqual(self.sessions.session_of(4242), (self.SID, log))
+        with mock.patch.dict(os.environ, {"ANTIGRAVITY_CLI_DATA_DIR": base}):
+            self.assertEqual(self.sessions.log_by_session("antigravity", self.SID), log)
+            self.assertEqual(self.sessions.agy_home(), base)
+
+    def test_its_log_read_as_the_others(self):
+        user = {"type": "USER_INPUT", "source": "USER", "created_at": "2026-11-24T10:00:00Z",
+                "content": "<USER_REQUEST>\nPlease add the button\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnow\n</ADDITIONAL_METADATA>"}
+        self.assertEqual(self.agents.from_person(user), "Please add the button")
+        self.assertIsNone(self.agents.from_person({**user, "source": "SYSTEM"}))
+        self.assertEqual(self.agents.said({"type": "PLANNER_RESPONSE", "content": " Added it. ", "created_at": "x"}), "Added it.")
+        self.assertIsNone(self.agents.said({"type": "GENERIC", "content": "tool output"}))
+        self.assertEqual(self.agents.stamp(user), "2026-11-24T10:00:00Z")
+
+    def test_its_flags(self):
+        self.assertEqual(self.flags.parse("antigravity", "--sandbox --add-dir /x"), ["--sandbox", "--add-dir=/x"])
+        for given, why in (("--model x", "--model"), ("--mode plan", "mode"), ("-i hi", "brief"), ("--conversation c", "resumes"),
+                           ("--settings {}", "--settings"), ("-p hi", "interactive")):
+            with self.assertRaises(self.flags.Fail) as e:
+                self.flags.parse("antigravity", given)
+            self.assertIn(why, str(e.exception), given)
+
+    def test_the_machine_check_says_it_is_signed_in(self):
+        self.assertEqual(self.takeover.cli_state("gemini-3.8-flash-low\tGemini 3.8 Flash (Low)"), "ready")
+        self.assertEqual(self.takeover.cli_state("Please sign in to continue: agy login"), "signed-out")
+        self.assertEqual(self.takeover.cli_state("missing"), "missing")
+        self.assertIsNone(self.takeover.cli_state(""))
+        self.assertIn("antigravity", self.takeover.CLIS)
+
+    def test_its_plan_usage(self):
+        answer = {"status": "SUCCESS", "conversation_id": "", "command": {"data": {"groups": [
+            {"name": "Gemini Models", "buckets": [{"id": "gemini-weekly", "remaining_fraction": 0.93, "reset_time": "2026-11-30T21:10:13Z"},
+                                                  {"id": "gemini-5h", "remaining_fraction": 0.88, "reset_time": "2026-11-24T12:10:13Z"}]},
+            {"name": "Claude and GPT models", "buckets": [{"id": "3p-5h", "remaining_fraction": 1}]}]}}}
+        got = self.machine.parse_antigravity(answer)
+        self.assertEqual(got["state"], "ok")
+        self.assertEqual([(w["name"], w["used"]) for w in got["windows"]],
+                         [("5-hour", 12.0), ("Weekly", 7.0), ("Claude and GPT models · 5-hour", 0)])
+        self.assertEqual(got["windows"][0]["resets_at"], 1795522213000)
+        self.assertEqual(self.machine.parse_antigravity({"status": "ERROR", "error": "not signed in"}), {"state": "signed-out"})
+        self.assertIsNone(self.machine.parse_antigravity([]))
+
+    def test_its_reviewer_line(self):
+        folder = os.path.join(self.root, "wt")
+        os.makedirs(folder)
+        import shlex
+        cmd = shlex.split(self.settings.reviewer_command("antigravity", "gemini-3.8-flash-low", None, folder=folder))
+        at = cmd.index("agy")
+        self.assertEqual(cmd[at:at + 3], ["agy", "--mode", "plan"])
+        self.assertEqual(cmd[-1], "-i")
+        self.assertEqual(cmd[cmd.index("--model") + 1:cmd.index("--model") + 4], ["gemini-3.8-flash", "--effort", "low"])
+        self.assertEqual(json.loads(cmd[cmd.index("--settings") + 1])["trustedWorkspaces"], self.settings.trust_roots(folder))
+        # a worker's own reviewer run, as its brief writes it
+        run = ["@hc", "run", "--bg", "--name", "demo-7-review", "--label", "herdr.agent=antigravity", "--", *cmd[at:], "Review the change"]
+        self.assertTrue(self.launch.helper_hc(run))
+        # its first message is -i's value, never a flag of its own
+        self.assertFalse(self.launch.helper_hc([*run[:-1], "--dangerously-skip-permissions", "x"]))
+        self.assertFalse(self.launch.helper_hc([*run[:-2], "--dangerously-skip-permissions", "-i", "x"]))

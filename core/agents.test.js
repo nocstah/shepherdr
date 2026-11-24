@@ -243,3 +243,50 @@ test("liveAgent names the model the terminal runs, from its CLI's arguments, els
   const cx = { foreground: { argv: ["codex", "--no-daemon", "-m", "gpt-6.2-sol", "-c", "service_tier=\"ultrafast\""] } };
   expect(liveAgent("codex", cx, {}, codexDflt)).toMatchObject({ kind: "codex", model: "gpt-6.2-sol", modelLabel: "GPT-6.2 Sol", speed: "ultrafast" });
 });
+
+// SHEP-1: Antigravity (agy) as a task's agent. `agy models` lists each level of a model as its own id; its settings.json
+// names its model by label. Synthetic lines in that shape.
+const AGY_OUT = [
+  "model\tGemini 4 Neon (XHigh)",
+  "agy\tgemini-4-neon-high\tGemini 4 Neon (High)", "agy\tgemini-4-neon-xhigh\tGemini 4 Neon (XHigh)", "agy\tgemini-4-neon-medium\tGemini 4 Neon (Medium)",
+  "agy\tgemini-pro-orchestrator-neon\tOrchestrator (Neon)", "agy\tgemini-3.8-flash-low\tGemini 3.8 Flash (Low)", "agy\tgemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)",
+].join("\n");
+
+test("SHEP-1: Antigravity's model list is one row per model with its levels, its own settings' model and level first", () => {
+  const d = parseDefaults("antigravity", AGY_OUT);
+  expect([d.model, d.effort]).toEqual(["gemini-4-neon", "xhigh"]);
+  expect(d.models.map((m) => [m.id, m.label, m.efforts.join("/"), m.defaultEffort])).toEqual([
+    ["gemini-4-neon", "Gemini 4 Neon", "medium/high/xhigh", "xhigh"],
+    ["gemini-pro-orchestrator-neon", "Orchestrator (Neon)", "", null],
+    ["gemini-3.8-flash", "Gemini 3.8 Flash", "low/medium", "medium"],
+  ]);
+  const menu = menuFor("antigravity", d);
+  expect(menu.name).toBe("Antigravity");
+  expect(menu.perms.map((p) => p.id)).toEqual(["acceptEdits", "auto", "plan", "bypassPermissions"]);
+  // what runs: its log's level id, else its arguments, else its settings
+  expect(line(current("antigravity", ["agy"], { model: "gemini-3.8-flash-low" }, d))).toBe("Antigravity · Gemini 3.8 Flash · Low");
+  expect(current("antigravity", ["agy", "--model", "gemini-3.8-flash", "--mode", "plan"], {}, d)).toMatchObject({ model: "gemini-3.8-flash", effort: "medium", perm: "plan" });
+  expect(current("antigravity", ["agy", "--dangerously-skip-permissions"], {}, d)).toMatchObject({ model: "gemini-4-neon", effort: "xhigh", perm: "bypassPermissions" });
+  expect(parseDefaults("antigravity", "")).toEqual({ model: null, effort: null, fast: false, models: null });
+});
+
+test("SHEP-1: Antigravity starts on its model, level and mode, resumes its conversation, and keeps its own flags", () => {
+  const old = { agent: "antigravity", session: "c-1", argv: ["agy", "--settings", '{"trustedWorkspaces":["/w"]}', "--add-dir", "/a", "--mode", "plan",
+    "--model", "x", "--conversation", "c-0", "-i", "the brief"] };
+  // Claude's ask is its accept edits; a level's id is its model and that level
+  expect(argvFor({ agent: "antigravity", model: "gemini-4-neon-high", perm: "manual" }, old)).toEqual({
+    argv: ["agy", "--settings", '{"trustedWorkspaces":["/w"]}', "--add-dir", "/a", "--model", "gemini-4-neon", "--effort", "high", "--mode", "accept-edits", "--conversation", "c-1"],
+    resume: true,
+    base: ["agy", "--settings", '{"trustedWorkspaces":["/w"]}', "--add-dir", "/a", "--model", "gemini-4-neon", "--effort", "high", "--mode", "accept-edits"],
+  });
+  expect(argvFor({ agent: "antigravity", perm: "full" }, { agent: "claude", argv: ["claude"] }).argv).toEqual(["agy", "--dangerously-skip-permissions"]);
+  expect(resumeArgv("antigravity", old.argv, "c-2")).toEqual(["agy", "--settings", '{"trustedWorkspaces":["/w"]}', "--add-dir", "/a", "--mode", "plan", "--model", "x", "--conversation", "c-2"]);
+  expect(AGall.freshArgv("antigravity", old.argv)).toEqual(["agy", "--settings", '{"trustedWorkspaces":["/w"]}', "--add-dir", "/a", "--mode", "plan", "--model", "x"]);
+  expect(extraFlags("antigravity", ["agy", "--settings", "{}", "--add-dir=/x", "--sandbox", "--model", "m", "--dangerously-skip-permissions"])).toEqual(["--add-dir=/x", "--sandbox"]);
+  expect(AGall.sessionOf("antigravity", "/h/.gemini/antigravity-cli/brain/0f1e2d3c-4b5a-6978-8a9b-acbdcedfe0f1/.system_generated/logs/transcript.jsonl")).toBe("0f1e2d3c-4b5a-6978-8a9b-acbdcedfe0f1");
+  expect(forkArgv("antigravity", old.argv, "c-1")).toBeNull();
+  expect([AGall.kindOfProgram("/usr/local/bin/agy"), AGall.kindOfProgram("antigravity"), AGall.kindOfProgram("agyx")]).toEqual(["antigravity", "antigravity", null]);
+  // from Antigravity's words to Codex's and back
+  expect(AGall.permAcross("acceptEdits", "codex", {})).toBe("auto");
+  expect(AGall.permAcross("read-only", "antigravity", {})).toBe("plan");
+});

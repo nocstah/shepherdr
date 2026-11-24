@@ -324,7 +324,7 @@ REVIEWERS = {"codex": (["codex", "--no-daemon", "--sandbox", "read-only", "--ask
                         {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+")}),
              "antigravity": (["agy", "--mode", "plan"],
                              {"--settings": re.compile(r'\{"trustedWorkspaces":\[[^\]]*\]\}'), "--model": re.compile(r"[\w.:-]+"),
-                              "--effort": re.compile(r"\w+"), "-i": re.compile(r"[\s\S]*")})}
+                              "--effort": re.compile(r"\w+"), "-i": re.compile(r"(?!-)[\s\S]*")})}
 HELPER = re.compile(r"[\w.-]+-(?:review|helper)(?:-[\w.-]+)?")
 
 
