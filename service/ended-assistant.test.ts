@@ -129,8 +129,20 @@ test("Agents.revive restarts a finished Assistant from its record: its CLI, flag
   expect(await agents.revive("t1", null)).toBe("t2");
   const [addr, reader, pick] = restart.mock.calls[0] as any[];
   expect(addr).toBe("t1");
-  expect(reader).toEqual({ kind: "codex", path: rec.log, argv: rec.argv });
+  expect(reader).toEqual({ kind: "codex", path: rec.log, argv: rec.argv, session: rec.session });
   expect(pick).toMatchObject({ kind: "codex", model: "gpt-6.2-sol", effort: "high" });
+});
+
+test("Agents.revive keeps Antigravity's conversation from its record when no transcript was written yet", async () => {
+  // agy names its conversation (its presence lock) before its transcript exists: the record's log is null
+  const rec = { kind: "antigravity", session: "865f5f1c-0000-4000-8000-000000000002", log: null, argv: ["agy", "--model", "gemini-3.8-flash", "--effort", "high"] };
+  const t = { ...ended(), argv: ["sh", "-c", "exec agy --model gemini-3.8-flash"], labels: { ...SPACE, "herdr.resume": JSON.stringify(rec) } };
+  const hub: any = { terminals: new Map([["t1", t]]), call: async () => { throw new Error("offline"); } };
+  const agents = new Agents(hub);
+  const restart = spyOn(agents, "restart").mockImplementation((async () => "t2") as any);
+  expect(await agents.revive("t1", null)).toBe("t2");
+  const [, reader] = restart.mock.calls[0] as any[];
+  expect(reader).toEqual({ kind: "antigravity", path: null, argv: rec.argv, session: rec.session });
 });
 
 // SHEP-324: herdr-core lost the Assistant's program and kept its terminal as a plain shell (still "live"): the message
