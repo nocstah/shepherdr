@@ -12,6 +12,8 @@ import { WORDS } from "../core/chat-view.js";
 import { settle } from "../core/pending.js";
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
+import { bangOf, sendBang, noteBang, readBang } from "./agy-bang.ts";
+import { cardAddr as addrOfAgyCard } from "./agy-asks.ts";
 const { CHOICE_KEY, choiceOf, withChoice, speedOf } = AGa as any;
 import * as SP from "../core/spaces.js";
 import { iconValue } from "../core/space-icon.js";
@@ -54,6 +56,19 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
     if (put.code !== 0 || !landed) throw new Error("A file didn't reach that machine.");
     return landed;
   }));
+  // a `!` command to Antigravity: run in its own shell mode, which a paste never opens (service/agy-bang.ts); the chat
+  // keeps it (agy's log doesn't), with what it printed
+  const bang = kindOf(t) === "antigravity" && !sent.length && !b.quote && !b.tags ? bangOf(text) : null;
+  if (bang) {
+    const f = await hub.front(a);
+    if (f && f !== "agent") throw new Error(NOT_TYPED[f]);
+    const why = await sendBang(hub, a, bang);
+    if (why) throw new Error(why);
+    const at = Date.now();
+    const kept = noteBang(a, bang, at, typeof b.cid === "string" ? b.cid.slice(0, 80) : undefined);
+    void readBang(hub, a, kept, () => (compat as any).watch?.changed?.()).catch(() => undefined);
+    return { ok: true, at };
+  }
   const body = [messageBody({ text, quote: typeof b.quote === "string" ? b.quote.slice(0, 2000) : null, tags: typeof b.tags === "string" ? b.tags : "", task: typeof b.quoteTask === "string" ? b.quoteTask : null }), ...files].filter(Boolean).join("\n\n");
   // held on purpose (Ctrl+Enter, a long press): it goes once the agent stops working
   const st = (hub.terminals.get(a) as any)?.status?.state;
@@ -328,6 +343,20 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (b.terminal === true) return { ok: true };
     const why = await (compat as any).watch?.press(str(b.question, 300), typeof b.choice === "number" ? b.choice : -1);
     return why ? { ok: false, error: why } : { ok: true };
+  }
+  if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("agy:")) {
+    // Antigravity's own ask on its screen (service/agy-asks.ts): pressed there, only on the dialog the card shows
+    const watch = (compat as any).watch;
+    const card = watch?.agy?.of?.(addrOfAgyCard(b.question))?.find((c: any) => c.id === b.question);
+    if (!card) throw new Error("This question is no longer waiting.");
+    // SHEP-324: answered by typing on its screen: only while Antigravity itself is in front
+    const f = await hub.front?.(card.addr);
+    if (f && f !== "agent") throw new Error(NOT_TYPED[f]);
+    const why = await watch.agy.answer(b.question, { choice: typeof b.choice === "number" ? b.choice : undefined,
+      choices: Array.isArray(b.choices) ? b.choices.filter((n: unknown) => typeof n === "number") : undefined,
+      other: typeof b.other === "string" ? b.other.slice(0, 4000) : undefined, terminal: b.terminal === true, dismiss: b.dismiss === true, talk: b.talk === true });
+    if (why) throw new Error(why);
+    return { ok: true };
   }
   if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("cq:")) {
     // Codex's own questions (compat.ts codexQuestion): answered on its screen, as a person would

@@ -16,6 +16,29 @@ export function bangOf(text: string): string | null {
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
+/** A `!` command sent from the chat. agy 1.5 writes none to its transcript, so the chat keeps them itself (the newest
+ *  few per agent, while the service runs): the person's message (with the page's id), then a row with what it
+ *  printed, read from its screen. A log that has it (SHELL_EXEC, a version that writes them) shows it instead. */
+export type Bang = { id: string; cid?: string; cmd: string; at: number; out?: string };
+const bangs = new Map<string, Bang[]>();
+let seq = 0;
+export const bangsOf = (addr: string): Bang[] => bangs.get(addr) ?? [];
+export function noteBang(addr: string, cmd: string, at: number, cid?: string): Bang {
+  const b: Bang = { id: `bang:${++seq}`, cmd, at, ...(cid ? { cid } : {}) };
+  bangs.set(addr, [...bangsOf(addr), b].slice(-30));
+  return b;
+}
+
+/** What it printed, read from its screen for a few seconds after it went in (none: it printed nothing yet). */
+export async function readBang(hub: BangHub, addr: string, b: Bang, changed: () => void, o: { looks?: number; every?: number } = {}) {
+  for (let i = 0; i < (o.looks ?? 20); i++) {
+    await Bun.sleep(o.every ?? 500);
+    const text = String((await hub.call<any>("terminal.read", { terminal: addr, lines: 0 }, 8000).catch(() => null))?.text ?? "");
+    const out = AG.bangOutput(text, b.cmd);
+    if (out !== null) { b.out = out; changed(); return; }
+  }
+}
+
 /** Runs `cmd` in Antigravity's `!` mode in terminal `addr`. -> null when it went in, else why not, in words. */
 export async function sendBang(hub: BangHub, addr: string, cmd: string, o: { wait?: number; every?: number; enter?: number } = {}): Promise<string | null> {
   const wait = o.wait ?? 1500, every = o.every ?? 50;

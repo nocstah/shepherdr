@@ -230,6 +230,27 @@ export function inShellMode(screen) {
   return below.some((l) => /\bactivated\s+bash\s+mode\b/i.test(l));
 }
 
+/** What a `!` command printed, as its screen shows it under "● ! <command>" ("  ⎿  <first line>", the rest indented),
+ *  for the newest run of that command; null while it shows no output yet (or the screen no longer has it). */
+export function bangOutput(screen, cmd) {
+  const lines = String(screen ?? "").replace(/\r/g, "").split("\n");
+  const flat = (s) => String(s).replace(/\s+/g, "");
+  const want = flat(cmd).slice(0, 60);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^[●•]\s+!\s?(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    let j = i + 1, said = m[1];
+    // a long command wraps: its lines go on up to its output's mark
+    while (j < lines.length && lines[j].trim() && !/^\s*⎿/.test(lines[j]) && !/^[●•>]/.test(lines[j])) said += lines[j++];
+    if (!flat(said).startsWith(want)) continue;
+    if (!/^\s*⎿/.test(lines[j] ?? "")) return null;
+    const out = [lines[j].replace(/^\s*⎿\s{0,2}/, "")];
+    for (j++; j < lines.length && /^\s{3,}\S/.test(lines[j]); j++) out.push(lines[j].replace(/^\s{5}/, ""));
+    return out.join("\n").replace(/\s+$/, "");
+  }
+  return null;
+}
+
 /** Whether it sits at its own prompt, nothing open over it (no dialog, no picker). */
 export function atPrompt(screen) {
   if (read(screen)) return false;

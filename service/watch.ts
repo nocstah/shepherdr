@@ -3,7 +3,11 @@
 // - a CLI stopped on its own start screen (trust, theme, sign in): a card with its choices (core/screens.js), pressed
 //   only on the screen it was drawn from.
 // - a session that is gone ("No conversation found"): show a note and wait for the person to restart it.
+// - Antigravity's own asks (a permission, ask_question, trust this folder) while it is blocked: a card each
+//   (service/agy-asks.ts), pressed only on the dialog it was drawn from.
 import type { Hub } from "./hub.ts";
+import { AgyAsks } from "./agy-asks.ts";
+import { kindOf } from "../core/chat-reader.js";
 import * as SC from "../core/screens.js";
 import * as CV from "../core/chat-view.js";
 import * as AG from "../core/agents.js";
@@ -19,16 +23,22 @@ export class AgentWatch {
   /** the service's own start-screen cards, by agent */
   private own = new Map<string, any[]>();
   screens: any;
+  /** Antigravity's dialogs as cards */
+  agy: AgyAsks;
   /** a note under an agent's chat ("Earlier session was gone, starting a new one…"), by agent */
   notes = new Map<string, { text: string; at: number }>();
   private tried = new Set<string>();
   private busy = false;
 
   constructor(private hub: Hub, private hc: Run, private o: { watched: () => Watched[]; changed: () => void }) {
+    this.agy = new AgyAsks((a: string[]) => this.hc(a), () => this.o.changed());
     this.screens = new ScreenWatch({ hc: (a: string[]) => this.hc(a), cards: (a: string) => this.own.get(a) ?? [], save: (a: string, list: any[]) => { this.own.set(a, list); this.o.changed(); } }, () => this.o.changed());
   }
 
   start() { setInterval(() => void this.tick(), 2500); }
+
+  /** Something a chat shows changed (a `!` command's output came: service/agy-bang.ts). */
+  changed() { this.o.changed(); }
 
   /** An agent's start-screen cards, oldest first. */
   cardsOf(addr: string): any[] {
@@ -44,6 +54,7 @@ export class AgentWatch {
         const k: any = this.hub.terminals.get(w.addr);
         if (!k) continue;
         if (starting(k) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
+        if (kindOf(k) === "antigravity" || this.agy.open(w.addr)) await this.agy.tick(w.addr, k).catch(() => undefined);
         if (this.lostCandidate(k)) await this.checkLost(w).catch(() => undefined);
       }
     } finally { this.busy = false; }
