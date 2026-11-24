@@ -1365,8 +1365,16 @@ export class Conversation {
       const q = this.questions.get(id);
       if (q?.questions?.length && !failed) {
         // an answer written in (not one of its options) is the person's message, as Claude Code's
-        const said = [...words.matchAll(/^A(\d+): (.+)$/gm)].map((m) => [Number(m[1]) - 1, m[2].trim()])
-          .filter(([i, w]) => w && !(q.questions[i]?.choices ?? []).some((o) => o.label === w || o.label.replace(/^\(recommended\)\s*/i, "") === w)).map(([, w]) => w);
+        // (several picked: joined with ", ")
+        const picked = (i, w) => {
+          const labels = (q.questions[i]?.choices ?? []).flatMap((o) => [o.label, o.label.replace(/^\(recommended\)\s*/i, "")]);
+          return labels.includes(w) || (q.questions[i]?.multi === true && w.split(/,\s*/).every((x) => labels.includes(x)));
+        };
+        const all = [...words.matchAll(/^A(\d+): (.+)$/gm)].map((m) => [Number(m[1]) - 1, m[2].trim()]);
+        // Esc on its dialog: "User Skipped" (a message from the chat went past it)
+        const skipped = ([, w]) => w === "User Skipped";
+        if (all.length && all.every(skipped)) q.closed = "dismissed";
+        const said = all.filter(([i, w]) => w && !skipped([i, w]) && !picked(i, w)).map(([, w]) => w);
         if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
       }
     } else if (l.type === "SHELL_EXEC") {

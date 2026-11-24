@@ -67,6 +67,14 @@ export class AgyAsks {
     this.changed();
   }
 
+  /** A message from the chat goes past its open dialog (Esc, then the words): how its card ended, as a hook ask's. */
+  aside(addr: string) {
+    const c = this.open(addr);
+    if (!c || c.how) return;
+    c.how = c.prompt.kind === "question" ? "Left to talk over in the chat" : "Dismissed in the chat";
+    this.pressed.set(c.id, Date.now());
+  }
+
   /** Looks at an Antigravity terminal (k: its record): a dialog on its screen while it is blocked is a card. */
   async tick(addr: string, k: any) {
     const open = this.open(addr);

@@ -84,6 +84,8 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
   const at = Date.now();
   // what it was, so the chat knows it again while it waits in the CLI's queue
   if (typeof b.cid === "string") compat.noteSend?.(a, { cid: b.cid.slice(0, 80), text, files: sent, at });
+  // Antigravity asking on its screen: the message goes past its dialog (Esc, core/send.js replyInstead), its card says so
+  if (kindOf(t) === "antigravity") (compat as any).watch?.agy?.aside?.(a);
   const r: any = await sendBody(io, a, kindOf(t) ?? "", body, again);
   // (stuck: it stayed in Claude Code's box; sent again with this id it gets only its Enter: send-once.ts)
   if (r.code !== 0) throw Object.assign(new Error(refusal(r).message), { stuck: !!r.stuck });
