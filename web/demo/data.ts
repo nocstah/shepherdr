@@ -24,6 +24,9 @@ export const tasks: Task[] = [
   // SHEP-348's six states on the repo line: own branch, no PR (SHOP-19); PR checks passed (SHOP-12), failed (SHOP-15),
   // running (GARDEN-3); merged (SHOP-11); in the folder itself (BLOG-10); research, no repo (NOTES-4)
   task('SHOP-12', 'Faster product search', P.shop, 'ready', { needsAt: NOW - 8 * hour, repo: 'branch', worktree: true, branch: 'task/faster-product-search', base: 'main', pr: { number: 212, url: 'https://github.com/example/shop/pull/212', checks: 'passed' }, summary: 'Results show in about 80 ms, down from 400.', proof: 'a-shop12' }),
+  // Antigravity (agy) at work: asking to run a command, and asking a question of its own
+  task('BLOG-11', 'Sitemap for the blog', P.blog, 'need', { agent: { chat: 'BLOG-11/worker', role: 'worker', cli: 'antigravity', status: 'need', running: true, age: '', note: '' }, needsAt: NOW - 3 * min, blocked: 'permission', repo: 'branch', worktree: true, branch: 'task/sitemap', base: 'main', report: { msg: 'Wants to run a command', progress: 60, paused: true } }),
+  task('BLOG-12', 'Tag pages', P.blog, 'need', { agent: { chat: 'BLOG-12/worker', role: 'worker', cli: 'antigravity', status: 'need', running: true, age: '', note: '' }, needsAt: NOW - 2 * min, blocked: 'question', repo: 'branch', report: { msg: 'Which tags get a page?', progress: 25, paused: true } }),
   task('BLOG-10', 'Fix typo on the About page', P.blog, 'ready', { needsAt: NOW - hour, repo: 'folder', summary: 'Fixed the typo and two more I found on the same page.' }),
   task('NOTES-4', 'Compare supplier quotes', P.notes, 'ready', { needsAt: NOW - 3 * hour, summary: 'Brightpack is cheapest at your volume. Norbox ships fastest.', proof: 'a-quotes' }),
   task('SHOP-14', 'Switch payment provider', P.shop, 'need', { needsAt: NOW - 2 * hour, blocked: 'question', repo: 'branch', report: { msg: 'Which provider, Stripe or Adyen?', progress: 35, paused: true } }),
@@ -224,6 +227,7 @@ const chat = (key: string, messages: Message[], agent: Chat['agent'], x: Partial
 const sonnet = { kind: 'claude', model: 'sonnet', modelLabel: 'Sonnet 5.5', effort: 'medium' }
 const opus = { kind: 'claude', model: 'opus', modelLabel: 'Opus 5.5', effort: 'high' }
 const gpt = { kind: 'codex', model: 'gpt-5.5-codex', modelLabel: 'GPT-5.5 Codex', effort: 'high' }
+const gemini = { kind: 'antigravity', model: 'gemini-3.8-flash-low', modelLabel: 'gemini-3.8-flash-low', effort: 'low' }
 const payQ = () => [a("Which provider should I switch to, Stripe or Adyen? I'd go with Stripe."), ask('q-pay', '', undefined, ['Stripe', 'Adyen'])]
 const permQ = (by?: typeof byPhoto) => [a('I need an image library to resize the photos.'), ask('q-pil', 'Run a command', by, ['Allow once', 'Decline'], { command: 'pip install pillow' })]
 
@@ -268,6 +272,27 @@ export const chats: Record<string, Chat> = Object.fromEntries(
     chat(P.garden, [a('GARDEN-3 is in progress, about 20 minutes left.'), { id: `m${++n}`, who: 'agent', news: { task: 'vm:GARDEN-4', ref: 'GARDEN-4', mark: 'needs', what: '', text: 'I need an image library to resize the photos.' } }, ask('q-pil', 'Run a command', byPhoto, ['Allow once', 'Decline'], { command: 'pip install pillow' })], gpt),
     chat('SHOP-14/worker', [a('I compared both for the shop. Stripe is already used for your invoices. Adyen gets cheaper above 50k a month but needs two weeks of paperwork.'), ...payQ().map((x, i) => (i ? x : { ...x, suggests: ['Go with Stripe', 'Compare the fees again'] }))], opus),
     chat('SHOP-12/worker', [a('Search is done. I added an index and cached the top queries.', { suggests: ['Looks good, merge it', 'Show me the diff', 'status?'] })], opus),
+    // Antigravity's chat (SHEP-2): its replies and rows from its transcript, its own asks as cards, a `!` command
+    chat('BLOG-11/worker', [
+      brief('Sitemap for the blog', 'Add a sitemap.xml that lists every post, built with the site. Keep the build command as it is.', 'read', today(10, 2)),
+      a("I'll add a sitemap step to the build. First a look at how the posts are laid out.", { at: today(10, 3) }),
+      did(today(10, 3), [['read', 'Read astro.config.mjs', ''], ['search', 'Looked in src/content/posts', ''], ['read', 'Read package.json', '']]),
+      a('Which format should the sitemap use?', { at: today(10, 5) }),
+      { id: `m${++n}`, who: 'agent', at: today(10, 6), ended: 'Which format should the sitemap use? · Answered in the chat: XML' },
+      did(today(10, 7), [['edit', 'Wrote scripts/sitemap.ts', '+48'], ['edit', 'Edited package.json', '+1 −0']]),
+      a('Done: `scripts/sitemap.ts` writes `public/sitemap.xml` after each build. It lists **42 posts**.', { at: today(10, 8) }),
+      me('!ls public', { at: today(10, 9) }),
+      did(today(10, 9), [['run', 'Ran ls public', '']]),
+      me('Run the build to check it.', { at: today(10, 10) }),
+      { id: `m${++n}`, who: 'agent', at: today(10, 10), ended: 'Run: bun install · Allowed in the chat' },
+      did(today(10, 11), [['run', 'Ran bun install', '']]),
+      ask('q-agy-build', 'Run a command', undefined, ['Allow once', 'Decline'], { command: 'bun run build && head -n 5 public/sitemap.xml' }),
+    ], gemini),
+    chat('BLOG-12/worker', [
+      brief('Tag pages', 'Give each tag its own page listing its posts, linked from the tag chips under each post.', 'read', today(10, 20)),
+      a('The blog has 31 tags; 12 of them are on one post only.', { at: today(10, 22) }),
+      ask('q-agy-tags', 'Which tags should get a page?', undefined, ['All of them', 'Tags with 3 or more posts', 'Only the ten biggest'], { asks: 'Antigravity asks', other: true }),
+    ], gemini),
     chat('BLOG-10/worker', [a('Fixed it straight in the blog folder, as this space is set up.')], opus),
     chat('NOTES-4/worker', [a('I read the three quotes in your notes folder and wrote up a comparison.')], opus),
     chat('vm:GARDEN-4/worker', permQ().map((x, i) => (i ? x : { ...x, suggests: ['Allow it once'] })), opus),
