@@ -64,6 +64,12 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   (they run this checkout's copies with the same env). Then `bun web/demo/live.ts <port> <SHEPHERDR_DATA>/token <port2>`
   puts a page in front of it on 127.0.0.1:<port2>. To stop it, never `lsof -t -i:<port>` without `-sTCP:LISTEN`: it
   also kills the go-between.
+- Such a service still runs the installed herdr-task by its path for its tick and the scheduler (`tool()` in
+  `service/jobs.ts`: `~/.config/herdr-app/mods/tasks/bin/herdr-task`, then `~/.local/bin/herdr-task`), never your
+  wrapper on PATH. To try a branch's herdr-task there, run its `herdr-task tick` yourself and swap the service's
+  herdr-automations terminal for the branch's scheduler: `HC_SESSION=<throwaway> hc kill herdr-automations`, `hc rm`
+  it, then `hc run --bg --keep --name herdr-automations -- env <same env> python3 <worktree>/mods/tasks/bin/herdr-task
+  scheduler` (`scheduler --ensure` keeps a live one whose argv says scheduler).
 - A scratch repo for such a run needs a unique folder name: its task worktrees go under the real
   `~/.local/share/shepherdr/worktrees/<name>`. Remove that folder after.
 - Two throwaway cores on one VM: `herdr-task --on <it>` installs its bundle into the real `~/.local/bin/herdr-task` unless
@@ -98,6 +104,11 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Real Codex in a throwaway hc session: `env -i HOME PATH TERM HC_SESSION=x CODEX_HOME=<scratch with auth.json symlinked> hc run --bg ...`;
   herdr-task refuses hc when HC_SESSION is neither unset, `default` nor its own session: give it
   `SHEPHERDR_SESSION=x` too, or feed it saved `hc ls`/`hc get` JSON.
+- A real Antigravity on a throwaway core:
+  `HC_SESSION=<throwaway> hc run --bg --name a1 --cwd <scratch dir> -- agy --model gemini-3.8-flash --effort low`
+  (a cheap one from `agy models`; a level's id splits into model and `--effort`, as `agy_model` in
+  `herdr_task/settings.py` does). Its `!` shell mode opens only on a raw `!` byte over the hub's `terminal.attach`:
+  `hc keys` can't type one, and a paste (`hc send`) never opens it (`service/agy-bang.ts`).
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's
   `CLAUDE_*` env unset (`CLAUDE_CODE_CHILD_SESSION` turns off transcripts).
 - Service code against a throwaway core: the service and herdr-task use the herdr-core session named by
@@ -106,6 +117,11 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - A real `herdr-task switch` test without touching people's tasks: `SHEPHERDR_SESSION=<name>`,
   `HERDR_TASK_STORE=<tmp>`, a scratch git repo with `add --here` and `start --space <any>`; answer the trust prompt with
   `hc keys <t> down enter`. Claude refuses a plain sleep, so give the brief a busy step.
+- A throwaway core for a herdr-task run starts again after `hc server stop` while that run's `herdr-task _track` lives:
+  it calls `hc get` every 5 s while its agent runs (`cmd_track` in `herdr_task/automations.py`), and any hc call starts
+  its session's core. Kill that scratch `_track` first, by its own pid (`pgrep -af _track`: its `--folder` is your
+  scratch repo), never with a pattern that also matches the live ones. Then stop the core (its kept terminals, the
+  agents and herdr-automations, come back as shells on a next start) and `rm ~/.local/state/herdr-core/<name>`.
 
 ## Other machines
 
