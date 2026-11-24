@@ -579,7 +579,9 @@ export class Compat {
     // a task's chat: its brief is its first message (SHEP-330), read once its log has it (a finished task's log too,
     // whose terminal is gone)
     const taskRow = this.taskRowOf(key);
-    const template = t?.template ?? null, task = Boolean(t?.labels?.["herdr.task"]) || !!taskRow;
+    // an Assistant started again on its own conversation (restart.sh's resume, herdr-task's restart_assistant: no template
+    // on the new terminal) opened it with its instructions all the same: its first message is that brief, never the person's
+    const template = t?.template ?? (t?.labels?.["herdr.role"] === "coordinator" ? "assistant" : null), task = Boolean(t?.labels?.["herdr.task"]) || !!taskRow;
     let briefShown = false;
     const mentionable = this.tasksFor(key);
     const own = this.chats.get(key);
