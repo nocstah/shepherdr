@@ -4,6 +4,7 @@
 // (keyOf). Each dialog is a card of its own: a question of several shows one at a time, as agy asks them. A card ends
 // when its dialog goes: answered from the chat (how it was), or in the terminal.
 import * as AG from "../core/agy-screen.js";
+import { starting } from "../core/screens.js";
 import type { Question } from "../web/shared/types.ts";
 
 type Run = (args: string[]) => Promise<{ code: number; stdout: string; stderr?: string }>;
@@ -75,11 +76,12 @@ export class AgyAsks {
     this.pressed.set(c.id, Date.now());
   }
 
-  /** Looks at an Antigravity terminal (k: its record): a dialog on its screen while it is blocked is a card. */
+  /** Looks at an Antigravity terminal (k: its record): a dialog on its screen while it is blocked is a card, and one
+   *  while it starts, before herdr-core has a word on it (trust this folder: core/screens.js starting). */
   async tick(addr: string, k: any) {
     const open = this.open(addr);
     const st = typeof k?.status === "string" ? k.status : k?.status?.state ?? null;
-    if (k?.state !== "live" || st !== "blocked") {
+    if (k?.state !== "live" || (st !== "blocked" && !starting(k))) {
       if (open) this.close(open, k?.state === "live" ? "Answered in the terminal" : "The agent stopped");
       return;
     }

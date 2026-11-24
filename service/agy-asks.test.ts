@@ -125,3 +125,13 @@ test("answered in its terminal, or its agent gone: the card ends so", async () =
   expect(gone.asks.of("t1")[0].how).toBe("The agent stopped");
   expect(await gone.asks.answer(gone.asks.of("t1")[0].id, { choice: 0 })).toMatch(/no longer waiting/);
 });
+
+test("its trust dialog before herdr-core says anything of it (no status yet): a card all the same", async () => {
+  const { asks } = fake(TRUST);
+  await asks.tick("t1", { state: "live", status: null, turn: 0, foreground: { name: "agy" } });
+  expect(asks.open("t1")?.prompt.kind).toBe("confirm");
+  // at work afterwards: not a dialog
+  const busy = fake(TRUST);
+  await busy.asks.tick("t1", { state: "live", status: { state: "working", app: "antigravity" }, turn: 1 });
+  expect(busy.asks.open("t1")).toBeNull();
+});

@@ -14,3 +14,16 @@ test("a lost session is reported without starting a replacement", async () => {
   expect(calls.map((a) => a[0])).toEqual(["get", "read"]);
   expect(watch.notes.get("t1")?.text).toContain("Restart");
 });
+
+test("Antigravity's trust dialog as it starts is one card, its own (service/agy-asks.ts), never a start card too", async () => {
+  const TRUST = ["Do you trust the contents of this project?", "", "> Yes, I trust this folder", "  No, exit", "", "  ↑/↓ Navigate · enter Confirm"].join("\n");
+  const terminal = { address: "t1", state: "live", status: null, turn: 0, created_ms: Date.now() - 60_000, cols: 100, argv: ["agy"], foreground: { name: "agy", pid: 9 }, labels: { "herdr.agent": "antigravity" } };
+  const hub: any = { terminals: new Map([["t1", terminal]]) };
+  const hc = async (args: string[]) => ({ code: 0, stdout: args[0] === "read" ? TRUST : "" });
+  const watch = new AgentWatch(hub, hc, { watched: () => [{ addr: "t1" }], changed: () => {} });
+  // (a start card waits for the same screen twice)
+  await (watch as any).tick();
+  await (watch as any).tick();
+  expect(watch.cardsOf("t1")).toEqual([]);
+  expect(watch.agy.open("t1")?.prompt.kind).toBe("confirm");
+});

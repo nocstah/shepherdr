@@ -53,8 +53,10 @@ export class AgentWatch {
       for (const w of this.o.watched()) {
         const k: any = this.hub.terminals.get(w.addr);
         if (!k) continue;
-        if (starting(k) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
-        if (kindOf(k) === "antigravity" || this.agy.open(w.addr)) await this.agy.tick(w.addr, k).catch(() => undefined);
+        // Antigravity's dialogs, its start screens too, are its own cards (service/agy-asks.ts): never a start card as well
+        const agy = kindOf(k) === "antigravity";
+        if ((starting(k) && !agy) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
+        if (agy || this.agy.open(w.addr)) await this.agy.tick(w.addr, k).catch(() => undefined);
         if (this.lostCandidate(k)) await this.checkLost(w).catch(() => undefined);
       }
     } finally { this.busy = false; }
