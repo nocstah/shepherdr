@@ -700,6 +700,8 @@ const agyFile = (uri) => {
 
 function agyStep(name, a = {}) {
   const path = a.Path ?? a.AbsolutePath ?? a.TargetFile ?? a.path ?? a.DirectoryPath ?? "";
+  // (a step too big to read whole: its calls' names alone)
+  const file = (p) => (p ? short(p) : "a file"), name1 = (p) => (p ? base(p) : "a file");
   switch (name) {
     case "run_command": {
       const cmd = String(a.CommandLine ?? a.command ?? a.toolSummary ?? "");
@@ -707,13 +709,13 @@ function agyStep(name, a = {}) {
       const shell = { kind: "shell", label: cmdWords(cmd), cmd };
       return { kind: "run", line: `Ran ${clip(cmd, 80)}`, doing: wait ?? `Running ${cmdWords(cmd)}`, waiting: Boolean(wait), shell };
     }
-    case "read_file": case "view_file": return { kind: "read", line: `Read ${short(path)}`, doing: `Reading ${base(path)}` };
+    case "read_file": case "view_file": return { kind: "read", line: `Read ${file(path)}`, doing: `Reading ${name1(path)}` };
     case "edit_file": case "replace_file_content": case "multi_replace_file_content":
-      return { kind: "edit", line: `Edited ${short(path)}`, doing: `Editing ${base(path)}` };
-    case "write_file": case "write_to_file": return { kind: "edit", line: `Wrote ${short(path)}`, doing: `Writing ${base(path)}` };
+      return { kind: "edit", line: `Edited ${file(path)}`, doing: `Editing ${name1(path)}` };
+    case "write_file": case "write_to_file": return { kind: "edit", line: `Wrote ${file(path)}`, doing: `Writing ${name1(path)}` };
     case "grep_search": return { kind: "search", line: `Searched for “${clip(a.Query ?? a.query, 50)}”`, doing: `Searching for “${clip(a.Query ?? a.query, 40)}”` };
     case "find_by_name": return { kind: "search", line: `Looked for ${clip(a.Pattern ?? a.pattern, 60)}`, doing: `Looking for ${clip(a.Pattern ?? a.pattern, 40)}` };
-    case "list_dir": return { kind: "search", line: `Looked in ${short(path)}`, doing: `Looking in ${base(path)}` };
+    case "list_dir": return { kind: "search", line: `Looked in ${file(path)}`, doing: `Looking in ${name1(path)}` };
     case "search_web": return { kind: "web", line: `Searched the web for “${clip(a.query ?? a.Query, 60)}”`, doing: `Searching the web for “${clip(a.query ?? a.Query, 40)}”` };
     case "read_url": case "read_url_content": return { kind: "web", line: `Opened ${clip(a.Url ?? a.url, 80)}`, doing: `Reading ${host(a.Url ?? a.url)}` };
     case "invoke_subagent": {
