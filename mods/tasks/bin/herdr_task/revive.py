@@ -27,11 +27,17 @@ CLAUDE_VALUE = {"--add-dir", "--mcp-config", "--append-system-prompt", "--system
                 "--model", "--effort", "--settings", "--permission-mode"}
 CODEX_VALUE = {"-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
                "-C", "--cd", "--add-dir", "-i", "--image", "--enable", "--disable", "--local-provider", "--oss"}
+# Antigravity's (`agy --help`); --conversation (-r, --resume) and -i (--prompt-interactive) are what it resumed and its
+# first message, which a start again sets itself.
+AGY_VALUE = {"--add-dir", "--agent", "--effort", "--input-format", "--json-schema", "--log-file", "--mode", "--model",
+             "--output-format", "--print-timeout", "--project", "--settings"}
+AGY_SESSION = {"--conversation", "-r", "--resume"}
+AGY_PROMPT = {"-i", "--prompt-interactive"}
 
 
 def kind_of(word):
     b = os.path.basename(str(word))
-    return b if b in ("claude", "codex") else None
+    return b if b in ("claude", "codex") else "antigravity" if b in ("agy", "antigravity") else None
 
 
 def base_argv(argv):
@@ -45,7 +51,18 @@ def base_argv(argv):
     i = 0
     while i < len(rest):
         a = rest[i]
-        if kind == "claude":
+        if kind == "antigravity":
+            if a in AGY_SESSION | AGY_PROMPT:
+                i += 2 if i + 1 < len(rest) else 1
+                continue
+            if re.match(r"^--(conversation|resume|prompt-interactive)=", a) or a in ("--continue", "-c"):
+                i += 1
+                continue
+            if a in AGY_VALUE and i + 1 < len(rest):
+                out += [a, rest[i + 1]]
+                i += 2
+                continue
+        elif kind == "claude":
             if a in ("--resume", "-r", "--session-id"):
                 i += 2 if i + 1 < len(rest) and not rest[i + 1].startswith("-") else 1
                 continue
@@ -77,6 +94,8 @@ def base_argv(argv):
 def resume_argv(kind, argv, session, message=None):
     """argv (base_argv's) resuming `session`, with a first message when given."""
     tail = [message] if message else []
+    if kind == "antigravity":
+        return [*argv, "--conversation", session, *(["-i", message] if message else [])]
     if kind == "claude":
         return [*argv, "--resume", session, *tail]
     return [argv[0], "resume", *argv[1:], session, *tail]
@@ -114,7 +133,7 @@ def record_of(k):
     if not kind:
         kind, argv = base_argv(fg.get("argv"))
         if kind:
-            argv[0] = kind
+            argv[0] = "agy" if kind == "antigravity" else kind
     if not kind:
         return None
     sid, log = session_of(pid)
@@ -181,7 +200,7 @@ def restart_assistant(k, message):
         rec = read_record(k) or {}
         cwd = rec.get("cwd") or k.get("cwd") or HOME
         base = ["hc", "run", "--bg", "--json", "--no-parent", "--cwd", cwd, *keep, *place, "--label", "herdr.role=coordinator"]
-        if rec.get("kind") in ("claude", "codex") and rec.get("session") and rec.get("argv"):
+        if rec.get("kind") in ("claude", "codex", "antigravity") and rec.get("session") and rec.get("argv"):
             argv = resume_argv(rec["kind"], list(rec["argv"]), rec["session"], message)
             r = run([*base, "--label", f"herdr.agent={rec['kind']}", "--", *clean_env(argv)])
         else:

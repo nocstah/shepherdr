@@ -70,6 +70,8 @@ def agent_running(k):
 # agent exited (or that herdr-core gave a fresh shell after losing its program) is still live: a message pasted there
 # runs as a shell command. Only "agent" may be typed into. The same rule is core/send.js inFront().
 RUNTIMES = {"node", "bun", "deno"}  # a CLI run as a script shows its runtime's name
+# The program names each agent runs as: Antigravity is agy, also installed as antigravity.
+PROGRAMS = {"claude": ("claude",), "codex": ("codex",), "antigravity": ("agy", "antigravity")}
 
 
 def front(k):
@@ -85,7 +87,7 @@ def front(k):
     if name in SHELLS:
         return "agent" if runs_command(fg.get("argv")) else "shell"
     kind = (k.get("labels") or {}).get("herdr.agent")
-    if kind in ("claude", "codex") and not name.startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
+    if kind in PROGRAMS and not name.startswith(PROGRAMS[kind]) and name not in RUNTIMES and not name[:1].isdigit():
         return "other"
     return "agent"
 
@@ -364,7 +366,7 @@ def prompted(task, k):
         return True
     since = task.get("ready_at") or 0
     for d in reversed(rows):
-        when = _ms(d.get("timestamp")) if d.get("timestamp") else None
+        when = _ms(stamp(d)) if stamp(d) else None
         if when is not None and when < since:
             return False
         if d.get("isCompactSummary") or d.get("isMeta") or d.get("isVisibleInTranscriptOnly"):
@@ -485,8 +487,8 @@ def log_lines(log, size=262144):
 
 
 def log_tail(log, size=262144):
-    """The last lines of an agent's session log (Claude Code's or Codex's JSONL), parsed; [] when
-    it can't be read. A first line cut in half is left out."""
+    """The last lines of an agent's session log (Claude Code's or Codex's JSONL, Antigravity's transcript), parsed; []
+    when it can't be read. A first line cut in half is left out."""
     out = []
     for raw in log_lines(log, size):
         try:
@@ -503,8 +505,20 @@ def agent_log(task, address=None):
     return a[-1]["log"] if a else None
 
 
+def stamp(d):
+    """A log line's time as it writes it: Claude Code's and Codex's timestamp, Antigravity's created_at."""
+    return d.get("timestamp") or d.get("created_at")
+
+
+# Antigravity wraps what someone wrote in <USER_REQUEST>, with its own tags after it (ADDITIONAL_METADATA...).
+AGY_REQUEST = re.compile(r"<USER_REQUEST>\r?\n?([\s\S]*?)\r?\n?</USER_REQUEST>")
+
+
 def said(d):
-    """An assistant line's words (Claude Code's, or Codex's response item), or None for anything else."""
+    """An assistant line's words (Claude Code's, Codex's response item, Antigravity's PLANNER_RESPONSE), or None for
+    anything else."""
+    if d.get("type") == "PLANNER_RESPONSE":
+        return str(d.get("content") or "").strip()
     msg = d.get("message") if d.get("type") == "assistant" and not d.get("isSidechain") and not d.get("isApiErrorMessage") else None
     if d.get("type") == "response_item" and (d.get("payload") or {}).get("role") == "assistant":
         msg = d["payload"]
@@ -524,6 +538,10 @@ def from_person(d):
             return "\n".join(x.get("text") or "" for x in c if isinstance(x, dict) and x.get("type") == "text")
     if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "user_message":
         return str(d["payload"].get("message") or "")
+    if d.get("type") == "USER_INPUT" and d.get("source") != "SYSTEM":
+        c = str(d.get("content") or "")
+        m = AGY_REQUEST.search(c)
+        return m.group(1) if m else c
     return None
 
 
@@ -581,7 +599,7 @@ def turn_began(task, address=None):
     for d in reversed(log_tail(agent_log(task, address), 131072)):
         if from_person(d) is not None:
             try:
-                return int(datetime.datetime.fromisoformat(str(d.get("timestamp")).replace("Z", "+00:00")).timestamp() * 1000)
+                return int(datetime.datetime.fromisoformat(str(stamp(d)).replace("Z", "+00:00")).timestamp() * 1000)
             except ValueError:
                 return None
     return None

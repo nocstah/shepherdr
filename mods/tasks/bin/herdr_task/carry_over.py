@@ -282,7 +282,7 @@ def resume_command(k, rec):
         return [*launch[:at], *resume_argv(kind, base, sid)], bool(k.get("keep"))
     # typed into a shell: the agent alone, the terminal kept as a shell once it exits (as before)
     kind, base = rec.get("kind"), rec.get("argv")
-    if kind not in ("claude", "codex") or not isinstance(base, list) or not base:
+    if kind not in ("claude", "codex", "antigravity") or not isinstance(base, list) or not base:
         return None
     return resume_argv(kind, [str(a) for a in base], sid), True
 

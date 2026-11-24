@@ -76,6 +76,33 @@ def own_rules(path):
     return rules
 
 
+def agy_rules(path):
+    """Antigravity's allow rules for the same commands as own_rules: command(<prefix>), which allows that command with
+    any words after it, so it runs without asking in any mode."""
+    out = []
+    for r in own_rules(path):
+        body = r[len("Bash("):-1]
+        out.append(f"command({body[:-2] if body.endswith(':*') else body})")
+    return out
+
+
+def settings_arg(argv):
+    """(index of argv's --settings value or None, its settings as a dict) for a CLI whose --settings takes inline JSON or
+    a file (Claude Code, Antigravity); a file it can't read: (None, {}), so ours go in a --settings of their own."""
+    if "--settings" not in argv[:-1]:
+        return None, {}
+    i = argv.index("--settings")
+    try:
+        cur = json.loads(argv[i + 1])
+    except ValueError:
+        try:
+            with open(os.path.expanduser(argv[i + 1])) as f:
+                cur = json.load(f)
+        except (OSError, ValueError):
+            cur = None
+    return (i, cur) if isinstance(cur, dict) else (None, {})
+
+
 def ask_command(path, sandboxed=False):
     """The PermissionRequest hook every task worker gets at launch (`herdr-task _allow`): its own
     commands allowed, anything else (a permission, its question tool, a plan) on the chat's card.
@@ -151,6 +178,28 @@ def own_argv(argv, folder=None):
         return out[:1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout={ASK_TIMEOUT}}}]}}]",
                           "-c", "hooks.state={" + ",".join(f'{json.dumps(k)}={{trusted_hash="sha256:{v}"}}' for k, v in state.items()) + "}",
                           *trust] + out[1:]
+    if k == "antigravity":
+        # Antigravity's --settings is for this session only, never saved: its folder (and its repository's root) trusted
+        # for this run, as Codex's (its "Do you trust the contents of this project?" would stop it before the brief,
+        # nobody at the keys), and its own herdr-task commands allowed. Its asks show as Needs you from its own status.
+        i, cur = settings_arg(out)
+        merged = dict(cur)
+        roots = trust_roots(folder) if folder else []
+        if roots:
+            had = [str(x) for x in cur.get("trustedWorkspaces") or []] if isinstance(cur.get("trustedWorkspaces"), list) else []
+            merged["trustedWorkspaces"] = list(dict.fromkeys(had + roots))
+        rules = agy_rules(path)
+        if rules:
+            perms = dict(cur.get("permissions") or {}) if isinstance(cur.get("permissions"), dict) else {}
+            allow = list(perms.get("allow") or [])
+            perms["allow"] = allow + [r for r in rules if r not in allow]
+            merged["permissions"] = perms
+        if merged == cur:
+            return out
+        if i is not None:
+            out[i + 1] = json.dumps(merged)
+            return out
+        return out[:1] + ["--settings", json.dumps(merged)] + out[1:]
     return out
 
 
@@ -214,11 +263,11 @@ def own_command(path, text, sandboxed=False):
     if sandboxed and "$" in text:
         # #1228: the reviewer's PATH as the brief writes it (its CLI's own folders, then $PATH), only exactly that;
         # #1131: a Claude reviewer's the worker's own CLAUDE_CONFIG_DIR too (CLAUDE_PROFILE)
-        for who in REVIEWERS:
-            pre = cli_env(who)
+        for who, (base, _) in REVIEWERS.items():
+            pre, word = cli_env(who), base[0]
             for env in ((pre or "env ") + CLAUDE_PROFILE,) if who == "claude" else (pre,):
-                if env and f"-- {env}{who} " in text:
-                    text = text.replace(f"-- {env}{who} ", f"-- env PATH=@herdr-reviewer {who} ", 1)
+                if env and f"-- {env}{word} " in text:
+                    text = text.replace(f"-- {env}{word} ", f"-- env PATH=@herdr-reviewer {word} ", 1)
     words, at, text = [], 0, text.strip()
     while at < len(text):
         if text[at] in " \t":
@@ -272,7 +321,10 @@ REVIEWERS = {"codex": (["codex", "--no-daemon", "--sandbox", "read-only", "--ask
                        {"--disable": re.compile(r"hooks"), "-m": re.compile(r"[\w.:-]+"),
                         "-c": re.compile(r'projects=\{.*\}|model_reasoning_effort="?\w+"?', re.S)}),
              "claude": (["claude", "--permission-mode", "dontAsk", "--tools=" + REVIEW_TOOLS, "--strict-mcp-config"],
-                        {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+")})}
+                        {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+")}),
+             "antigravity": (["agy", "--mode", "plan"],
+                             {"--settings": re.compile(r'\{"trustedWorkspaces":\[[^\]]*\]\}'), "--model": re.compile(r"[\w.:-]+"),
+                              "--effort": re.compile(r"\w+"), "-i": re.compile(r"[\s\S]*")})}
 HELPER = re.compile(r"[\w.-]+-(?:review|helper)(?:-[\w.-]+)?")
 
 
@@ -295,7 +347,7 @@ def helper_hc(words):
             j += 1
         elif opts[j] == "--name" and j + 1 < len(opts) and HELPER.fullmatch(opts[j + 1]):
             j += 2
-        elif opts[j] == "--label" and j + 1 < len(opts) and re.fullmatch(r"herdr\.(?:task=[\w#.@-]+|role=(?:reviewer|helper)|agent=(?:codex|claude))", opts[j + 1]):
+        elif opts[j] == "--label" and j + 1 < len(opts) and re.fullmatch(r"herdr\.(?:task=[\w#.@-]+|role=(?:reviewer|helper)|agent=(?:codex|claude|antigravity))", opts[j + 1]):
             j += 2
         else:
             return False
@@ -435,6 +487,8 @@ def resume_argv(argv, session, folder=None):
         return argv + ([] if has else ["--permission-mode", mode]) + ["--resume", session]
     if k == "codex":
         return [argv[0], "resume"] + argv[1:] + [session]
+    if k == "antigravity":
+        return argv + ["--conversation", session]
     return None
 
 
@@ -1014,7 +1068,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     if not role:
         cmd = own_argv(cmd, folder_for(s, task))
     if message:
-        cmd = cmd + [message]
+        # Antigravity takes no prompt word (it refuses one): its first message is -i's
+        cmd = cmd + (["-i", message] if agent_key(argv) == "antigravity" else [message])
     if setup and not role:
         cmd = setup_argv(s, task, setup, cmd)
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",

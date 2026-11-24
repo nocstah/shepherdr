@@ -1,6 +1,7 @@
 """Output: a task as JSON and as one line of text."""
 
 import json
+import re
 
 from .base import now
 from .agents import (
@@ -55,7 +56,9 @@ def subagent(k):
     lb = k.get("labels") or {}
     st = k.get("status")
     st = st.get("state") if isinstance(st, dict) else st
-    cli = lb.get("herdr.agent") or ("codex" if "codex" in str(k.get("agent") or "") else "claude" if k.get("agent") else None)
+    prog = str(k.get("agent") or "")
+    cli = lb.get("herdr.agent") or ("codex" if "codex" in prog else "antigravity" if re.search(r"agy|antigravity", prog) else
+                                    "claude" if prog else None)
     return {"address": k["address"], "parent": k.get("parent"), "role": lb.get("herdr.role") or "helper", "agent": cli,
             "name": k.get("name"), "status": "working" if st == "working" else "needs" if st == "blocked" else "done",
             "at": k.get("created_ms")}

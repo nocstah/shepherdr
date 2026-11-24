@@ -5,8 +5,8 @@ nothing installed: Herdr's sidebar sends it as `python3 -c <this file> [--limits
 herdr-task's tick imports it to hold new tasks while its machine is too busy (hold_reason).
 
 Plan limits come only from each CLI's own usage source, each in its own short process that can
-write nothing real (bwrap on Linux, sandbox-exec on a Mac): Claude Code's `/usage` and Codex's
-`account/rateLimits/read`. Never through a running agent, never a guess: a CLI it can't read says
+write nothing real (bwrap on Linux, sandbox-exec on a Mac): Claude Code's `/usage`, Codex's
+`account/rateLimits/read` and Antigravity's `/usage` (`agy --print /usage --output-format json`). Never through a running agent, never a guess: a CLI it can't read says
 why. Only percentages, reset times, the plan's name and the signed-in account come back."""
 
 import json
@@ -521,8 +521,84 @@ def codex():
         close()
 
 
+# Antigravity's quota buckets, in the order shown: its Gemini models' own, then the other models' (Claude and GPT), named
+# by their group.
+AGY_BUCKETS = {"gemini-5h": (0, 300), "gemini-weekly": (1, 10080), "3p-5h": (2, 300), "3p-weekly": (3, 10080)}
+
+
+def _iso_ms(v):
+    import datetime
+    try:
+        return int(datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_antigravity(answer):
+    """`agy --print /usage --output-format json`'s answer: each bucket's share used and when it resets. None when it
+    isn't a usage answer."""
+    if not isinstance(answer, dict):
+        return None
+    if answer.get("status") != "SUCCESS":
+        said = json.dumps(answer)[:2000]
+        return {"state": "signed-out"} if re.search(r"sign ?in|log ?in|not (signed|logged)|unauthenticated|auth", said, re.I) else None
+    groups = (((answer.get("command") or {}).get("data") or {}).get("groups"))
+    if not isinstance(groups, list):
+        return None
+    found = []
+    for gi, g in enumerate(groups):
+        for b in (g.get("buckets") or []) if isinstance(g, dict) else []:
+            if not isinstance(b, dict):
+                continue
+            shape = AGY_BUCKETS.get(b.get("id") or b.get("bucketId"))
+            left = b.get("remaining_fraction", b.get("remainingFraction"))
+            if not shape or not isinstance(left, (int, float)):
+                continue
+            named = str(g.get("name") or "") if gi else ""
+            x = {"name": (named[:40] + " · " if named else "") + _window_name(shape[1]),
+                 "used": round(min(100, max(0, (1 - left) * 100)), 1)}
+            at = _iso_ms(b.get("reset_time") or b.get("resetTime"))
+            if at:
+                x["resets_at"] = at
+            found.append((shape[0], x))
+    if not found:
+        return {"state": "unknown", "why": "Antigravity reported no limits"}
+    return {"state": "ok", "windows": [x for _, x in sorted(found, key=lambda f: f[0])]}
+
+
+def antigravity():
+    binary = which("agy") or which("antigravity")
+    if not binary:
+        return None
+    missing = _no_seal()
+    if missing:
+        return {"state": "unknown", "why": missing}
+    argv = _quiet([binary, "--print", "/usage", "--output-format", "json", "--print-timeout", "20s"])
+    close, env, cwd = None, None, None
+    if MAC:
+        seal = _mac_seal()
+        if not seal:
+            return {"state": "unknown", "why": "Can't read it safely here: the Mac seal wouldn't hold"}
+        opened, wrap, close = seal
+        argv, env, cwd = wrap(argv), dict(os.environ, TMPDIR=opened), opened
+    else:
+        argv = _seal(argv)
+    try:
+        r = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=45, env=env, cwd=cwd)
+        got = parse_antigravity(json.loads(r.stdout or "null"))
+    except subprocess.TimeoutExpired:
+        return {"state": "unknown", "why": "Antigravity took too long to answer"}
+    except (OSError, ValueError):
+        got = None
+    finally:
+        if close:
+            close()
+    return got or {"state": "unknown", "why": "Couldn't read Antigravity's answer"}
+
+
 def limits():
-    """{claude?, codex?}: each CLI here, read side by side."""
+    """{claude?, codex?, antigravity?}: each CLI here, read side by side."""
     out = {}
 
     def safely(key, read):
@@ -532,7 +608,7 @@ def limits():
             got = {"state": "unknown", "why": "Couldn't run it"}
         if got is not None:
             out[key] = dict(got, at=now_ms())
-    jobs = [threading.Thread(target=safely, args=a) for a in (("claude", claude), ("codex", codex))]
+    jobs = [threading.Thread(target=safely, args=a) for a in (("claude", claude), ("codex", codex), ("antigravity", antigravity))]
     for j in jobs:
         j.start()
     for j in jobs:

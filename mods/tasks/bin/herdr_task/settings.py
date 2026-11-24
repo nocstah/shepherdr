@@ -14,8 +14,18 @@ from .base import Fail, git, HOME, WHERE
 from . import flags as FLAGS
 
 
-# What each agent key starts by default. Unknown keys run as themselves; --argv overrides.
-AGENTS = {"claude": ["claude"], "codex": ["codex", "--no-daemon"]}
+# What each agent key starts by default. Unknown keys run as themselves; --argv overrides. Antigravity's key is
+# antigravity, its binary agy (it also installs itself as antigravity: both count).
+AGENTS = {"claude": ["claude"], "codex": ["codex", "--no-daemon"], "antigravity": ["agy"]}
+# Every agent key Shepherdr knows, and the binary each runs.
+KINDS = ("claude", "codex", "antigravity")
+BIN = {"claude": "claude", "codex": "codex", "antigravity": "agy"}
+# Antigravity's binaries (agy, and antigravity, the same program), by their file name.
+AGY_NAMES = ("agy", "antigravity")
+# Antigravity's reasoning levels (`agy --help`: --effort low|medium|high|xhigh|max) and its --mode words for
+# Shepherdr's permission modes: agy starts in its own default mode when it gets none.
+AGY_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+AGY_MODES = {"acceptEdits": "accept-edits", "auto": "auto", "plan": "plan"}
 
 
 # ---- the person's settings ------------------------------------------------------------------
@@ -31,7 +41,8 @@ OLD_INSTRUCTIONS = os.path.join(HOME, ".herdr", "instructions")
 ASSISTANT_TEMPLATES = ("assistant", "coordinator")  # "coordinator": Assistants started before the rename
 DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "worktrees": True,
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
-                      "worktree_root": "", "setup": "", "accept_command": "", "claude_flags": [], "codex_flags": []},
+                      "worktree_root": "", "setup": "", "accept_command": "", "claude_flags": [], "codex_flags": [],
+                      "antigravity_flags": []},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {},
             "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
@@ -223,14 +234,41 @@ def argv_for(pick):
         elif perm:
             a += ["-s", "workspace-write", "-a", "on-request"]
         return a
+    if agent == "antigravity":
+        a = ["agy", *extra]
+        model, effort = agy_model(pick.get("model"), pick.get("effort"))
+        if model:
+            a += ["--model", model]
+        if effort:
+            a += ["--effort", effort]
+        perm = PERM_ACROSS["antigravity"].get(pick.get("perm"), pick.get("perm"))
+        if perm == "bypassPermissions":
+            a.append("--dangerously-skip-permissions")
+        elif perm in AGY_MODES:
+            a += ["--mode", AGY_MODES[perm]]
+        return a
     return [agent] if agent else None
+
+
+def agy_model(model, effort=None):
+    """(model, effort) as agy takes them: `agy models` lists each level as its own id (gemini-4-neon-high), and agy
+    quietly starts on its settings' model when it gets such an id and an --effort that disagrees, so a level in the id
+    becomes its --effort (the effort asked for wins) and the model its base id."""
+    m = re.fullmatch(r"(.+)-(%s)" % "|".join(AGY_EFFORTS), str(model or ""))
+    if m:
+        return m.group(1), effort or m.group(2)
+    return model or None, effort or None
 
 
 # Permission modes as each CLI has them, and a mode carried to the other CLI when a task's agent
 # changes: its nearest mode there, else that CLI's default (core/agents.js PERM_ACROSS, #758, #1219).
-PERMS = {"claude": ("manual", "auto", "acceptEdits", "plan", "bypassPermissions"), "codex": ("read-only", "auto", "full")}
+# Antigravity's are Claude Code's words for what they mean there (accept-edits, auto, plan, skip permissions); its own
+# asking default has no flag, so Claude's ask is its accept edits (it still asks before commands).
+PERMS = {"claude": ("manual", "auto", "acceptEdits", "plan", "bypassPermissions"), "codex": ("read-only", "auto", "full"),
+         "antigravity": ("acceptEdits", "auto", "plan", "bypassPermissions")}
 PERM_ACROSS = {"claude": {"read-only": "plan", "auto": "auto", "full": "bypassPermissions"},
-               "codex": {"plan": "read-only", "auto": "auto", "acceptEdits": "auto", "bypassPermissions": "full"}}
+               "codex": {"plan": "read-only", "auto": "auto", "acceptEdits": "auto", "bypassPermissions": "full"},
+               "antigravity": {"manual": "acceptEdits", "read-only": "plan", "auto": "auto", "full": "bypassPermissions"}}
 PERM_DEFAULT = {"codex": "auto"}
 
 
@@ -255,6 +293,8 @@ def argv_perm(argv):
         nxt = argv[i + 1]
         if a == "--permission-mode":
             return "manual" if nxt == "default" else nxt
+        if a == "--mode" and agent_key(argv) == "antigravity":
+            return {v: k for k, v in AGY_MODES.items()}.get(nxt)
         if a in ("-s", "--sandbox"):
             return {"read-only": "read-only", "workspace-write": "auto", "danger-full-access": "full"}.get(nxt)
     return None
@@ -475,8 +515,11 @@ def cli_here(kind):
     return (((read_checks().get("machines") or {}).get("") or {}).get(kind))
 
 
-CLI_NAMES = {"claude": "Claude Code", "codex": "Codex"}
-LOGIN = {"claude": "claude auth login", "codex": "codex login"}
+# The other CLI (an unset Reviewer, the Backup agent): Claude Code's is Codex, the others' Claude Code.
+OTHER_CLI = {"claude": "codex", "codex": "claude", "antigravity": "claude"}
+CLI_NAMES = {"claude": "Claude Code", "codex": "Codex", "antigravity": "Antigravity"}
+# Antigravity signs in from its own first screen: starting it is its login.
+LOGIN = {"claude": "claude auth login", "codex": "codex login", "antigravity": "agy"}
 
 
 def codex_models():
@@ -552,8 +595,8 @@ def cli_dirs(name):
 
 def cli_env(name):
     """'env "PATH=<its folders>:$PATH" ' before a helper's command so hc run finds the CLI and what it needs, the rest
-    of the worker's PATH kept; "" when it is in the system's own folders or can't be found."""
-    dirs = [d for d in cli_dirs(name) if d not in BARE_DIRS]
+    of the worker's PATH kept; "" when it is in the system's own folders or can't be found. name: a CLI or an agent key."""
+    dirs = [d for d in cli_dirs(BIN.get(name, name)) if d not in BARE_DIRS]
     if not dirs or any(re.search(r'["$`\\:]', d) for d in dirs):
         return ""
     return 'env "PATH=' + ":".join(dirs) + ':$PATH" '
@@ -597,7 +640,7 @@ CLAUDE_MODEL = re.compile(r"^(claude-|opus|sonnet|haiku|fable)", re.I)
 def check_reviewer_model(t):
     """add/edit: a reviewer model Codex here can't use is refused when it is set (#948), not found at review time."""
     m = t.get("reviewer_model")
-    if not m or t.get("reviewer") == "claude" or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
+    if not m or t.get("reviewer") in ("claude", "antigravity") or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
         return
     ids = codex_lacks(m)
     if ids:
@@ -663,6 +706,15 @@ def reviewer_command(who, model=None, effort=None, folder=None):
         a += ["--effort", effort] if effort else []
         # #1131: hc run gives it hc's environment, not the worker's: the worker's own Claude profile, when it has one
         return (cli_env(who) or "env ") + CLAUDE_PROFILE + shlex.join(a)
+    elif who == "antigravity":
+        # Plan mode: it researches and reports, never edits or runs what isn't read-only. Its folder trusted for this
+        # run only (its trust dialog would stop it, nobody at the keys); agy takes no prompt word, so its command ends
+        # in -i, which the prompt after it is the value of.
+        model, effort = agy_model(model, effort)
+        a = ["agy", "--mode", "plan", "--settings", json.dumps({"trustedWorkspaces": trust_roots(folder)}, separators=(",", ":"))]
+        a += ["--model", model] if model else []
+        a += ["--effort", effort] if effort else []
+        a.append("-i")
     else:
         return None
     # #1228: hc run starts it with a bare PATH; its folders (nvm's, with node) go first, the worker's PATH after
@@ -712,8 +764,8 @@ def task_settings(s, t, space=None, argv=None, live=False):
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
-        other = {"claude": "codex", "codex": "claude"}.get(agent)
-        want = rv.get("agent") or (other if other and shutil.which(other) else agent)
+        other = OTHER_CLI.get(agent)
+        want = rv.get("agent") or (other if other and shutil.which(BIN.get(other, other)) else agent)
         who, said = want, ""
         if want != agent and cli_here(want) == "signed-out":
             # Signed out here, it would sit at its sign-in screen and never review (#745): the task's own CLI does.
@@ -880,7 +932,9 @@ def agent_argv(key, argv_json=None):
 
 
 def agent_key(argv):
-    return os.path.basename(argv[0])
+    """The agent key an argv runs: its first word's name, agy (or antigravity) as antigravity."""
+    name = os.path.basename(str(argv[0]))
+    return "antigravity" if name in AGY_NAMES else name
 
 
 def bare(i):

@@ -225,12 +225,12 @@ def main():
         c.add_argument("--finish-notes", help="this task's own \"When a task finishes\" notes, replacing the folder's (\"\": the folder's)")
 
     def task_opts(c):
-        c.add_argument("--agent", help="the CLI its agent runs (claude, codex, ...; default: Settings' Workers)")
+        c.add_argument("--agent", help="the CLI its agent runs (claude, codex, antigravity; default: Settings' Workers)")
         c.add_argument("--model", help="its agent's model, an id or alias (default: Settings'; \"default\": the CLI's own)")
         c.add_argument("--effort", help="its agent's effort: low, medium, high, xhigh, max... (default: Settings')")
         pick_opts(c)
-        c.add_argument("--flags", help="extra flags for its agent's CLI, as you'd type them, e.g. --flags=\"--advisor opus\": only real Claude Code or "
-                                       "Codex flags, none Shepherdr sets itself (default: its space's Settings › Tasks; \"none\": none; \"default\": the space's again)")
+        c.add_argument("--flags", help="extra flags for its agent's CLI, as you'd type them, e.g. --flags=\"--advisor opus\": only real Claude Code, "
+                                       "Codex or Antigravity flags, none Shepherdr sets itself (default: its space's Settings › Tasks; \"none\": none; \"default\": the space's again)")
         c.add_argument("--reviewer", help="the CLI its agent's review uses (default: Settings' Reviewer, else the other CLI)")
         c.add_argument("--reviewer-model", help="the reviewer's model")
         c.add_argument("--reviewer-effort", help="the reviewer's effort")
@@ -247,10 +247,11 @@ def main():
     def pick_opts(c):
         c.add_argument("--speed", help="its agent's speed, where its model has more than one: regular, fast, ultrafast (default: Settings')")
         c.add_argument("--permission", help="its agent's permission mode, in its CLI's words: Claude Code's default, acceptEdits, plan, "
-                                            "auto, bypassPermissions; Codex's read-only, auto, full (\"\": Settings' again)")
+                                            "auto, bypassPermissions; Codex's read-only, auto, full; Antigravity's acceptEdits, auto, plan, "
+                                            "bypassPermissions (\"\": Settings' again)")
 
     def agent_opts(c):
-        c.add_argument("--agent", help="agent key (claude, codex, ...)")
+        c.add_argument("--agent", help="agent key (claude, codex, antigravity)")
         c.add_argument("--argv", help="how to start it, as a JSON list (default from --agent)")
 
     def when_opts(c, edit=False):
@@ -447,8 +448,8 @@ def main():
     auto_cmd("pause", "stop it firing (--space <id> --all: every schedule of a space, as when the space is archived)", id="maybe")
     auto_cmd("resume", "let it fire again (--space <id> --all: every schedule of a space)", id="maybe")
     c = sub.add_parser("flags", help="check extra flags for a task's agent (#1222) and print them as Shepherdr keeps them: "
-                       "only real Claude Code or Codex flags, none Shepherdr sets itself")
-    c.add_argument("--agent", default="claude", choices=["claude", "codex"], help="the CLI they're for (default: claude)")
+                       "only real Claude Code, Codex or Antigravity flags, none Shepherdr sets itself")
+    c.add_argument("--agent", default="claude", choices=["claude", "codex", "antigravity"], help="the CLI they're for (default: claude)")
     c.add_argument("--json", action="store_true")
     c.add_argument("words", nargs=argparse.REMAINDER, help="the flags, after -- (e.g. -- --advisor opus), or as one quoted line")
     c.set_defaults(fn=cmd_flags)
