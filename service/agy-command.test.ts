@@ -16,7 +16,7 @@ function chatOf(addr: string, conv = new Conversation("antigravity")): any[] {
   return c.chat("p:local:s1", { conv, start: 0, machine: null, addr, kind: "antigravity" }, agy).messages;
 }
 const RULE = "─".repeat(80);
-const screen = (lines: string[]): BangHub => ({ async call() { return { text: [...lines, RULE, ">", RULE].join("\n") }; }, async core() { throw new Error("not typed"); } });
+const screen = (lines: string[]): BangHub => ({ async call(): Promise<any> { return { text: [...lines, RULE, ">", RULE].join("\n") }; }, async core() { throw new Error("not typed"); } });
 
 test("a `!` command kept for Antigravity is one command row: running, then done with what it printed", async () => {
   const b = noteBang("agy-c1", "git status --short", 1_000, "c-1");
