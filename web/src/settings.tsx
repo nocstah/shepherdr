@@ -17,7 +17,7 @@ import { OWN_VERSION } from './update.ts'
 import { IconButton } from './space-icon.tsx'
 import { Btn, cx, I, IB, Meter, Row, Seg, Tgl } from './ui.tsx'
 
-const ALL: [string, IconName][] = [['General', 'gear'], ['Agents', 'agent'], ['Tasks', 'tasks'], ['Secrets', 'key'], ['Machines', 'server'], ['Usage', 'gauge'], ['Plugins', 'plug'], ['About', 'info']]
+export const ALL: [string, IconName][] = [['General', 'gear'], ['Agents', 'agent'], ['Tasks', 'tasks'], ['Secrets', 'key'], ['Machines', 'server'], ['Usage', 'gauge'], ['Plugins', 'plug'], ['About', 'info']]
 const SPACE: [string, IconName][] = [['Space', 'hash'], ['Agents', 'agent'], ['Tasks', 'tasks'], ['Secrets', 'key']]
 
 /** a settings row: a label and a control */
@@ -164,7 +164,7 @@ function General() {
       const said = await f()
       if (said) notice(said)
     } catch (e) {
-      notice(e instanceof Error ? e.message : 'That did not work. Try again.')
+      notice(e instanceof Error ? e.message : 'That did not work. Try again.', { tone: 'error' })
     }
     await read()
   }
@@ -455,7 +455,8 @@ export function SettingsWindow({ snap }: { snap: Snapshot }) {
   const space = s.scope !== 'all' && !isEverything(snap, s.scope) ? placeOf(snap, s.scope) : undefined
   const place = space ? space.id : 'all'
   const own = registry.settings.filter((x) => (space ? x.scope !== 'all' : x.scope !== 'space')).map((x) => [x.name, x.icon] as [string, IconName])
-  const L = [...(space ? SPACE : ALL), ...own]
+  // a plugin's own sections go before About
+  const L = space ? [...SPACE, ...own] : [...ALL.slice(0, -1), ...own, ...ALL.slice(-1)]
   const title = space ? `Settings for ${spaceLabel(snap, space.id)}` : 'Settings'
   const cur = s.sec ?? (ph ? null : L[0]![0])
   const close = () => setUI({ settings: null })

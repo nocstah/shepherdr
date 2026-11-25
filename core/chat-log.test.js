@@ -253,6 +253,27 @@ test("a reply's suggest line rides on the reply, never shows, and a later reply 
   expect(c.items.filter((x) => x.kind === "agent").map((x) => x.suggests)).toEqual([["yes, merge it"], undefined]);
 });
 
+// The bubbles' bug: a reply with suggestions, then another Assistant's message or a news line answered with a no-reply.
+// The no-reply turn adds no agent words, so the reply stays the agent's newest words with its suggestions.
+test("a no-reply answer to another Assistant's message or a news line adds no words after the suggested reply", async () => {
+  const peer = '<herdr-assistant from="vmk/t2" machine="vmk" space="Ops" can-reply="no">Fixed it there</herdr-assistant>';
+  const news = '<herdr-news task="SHOP-2" event="ready">SHOP-2 is ready: Fix login</herdr-news>';
+  for (const [incoming, quiet] of [[peer, "<no-reply>"], [news, "<hc no-reply/>"], [peer, "<hc no-reply/>"]]) {
+    const c = await read([
+      person,
+      reply("m1", [text('Merge it now?\n<hc suggest="yes, merge it"/>\n<hc suggest="not yet"/>')]),
+      { ...person, uuid: "i1", message: { role: "user", content: incoming } },
+      reply("m2", [text(quiet)]),
+    ]);
+    expect(said(c)).toEqual(["Merge it now?"]);
+    const last = c.items.findLast((x) => x.kind === "agent");
+    expect(last.suggests).toEqual(["yes, merge it", "not yet"]);
+  }
+  // the plain case: nothing after the reply
+  const plain = await read([person, reply("m1", [text('Merge it now?\n<hc suggest="yes, merge it"/>')])]);
+  expect(plain.items.findLast((x) => x.kind === "agent").suggests).toEqual(["yes, merge it"]);
+});
+
 test("a suggest line in an earlier block doesn't carry onto a later block's words", async () => {
   const c = await read([person, reply("m1", [text('Done?\n<hc suggest="yes"/>'), { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }]), reply("m2", [text("More to do.")])]);
   const agents = c.items.filter((x) => x.kind === "agent");
@@ -490,4 +511,71 @@ test("a big call's step ends with its result, and none outlives the turn", async
   const d = await read([person, reply("b3", [small]), { ...person, uuid: "p9", message: { role: "user", content: "Another thing" } }, reply("b4", [thinking("Hmm.")])]);
   expect(d.open.size).toBe(0);
   expect(d.doing).toBe("Thinking");
+});
+
+// A message row only from a real send: a command that merely holds a send line (a watcher that replies once a device
+// turns up) is an ordinary command, never "Message to … · Delivered".
+test("sendsOf leaves out a send that may never run: in a loop's or an if's body, a function, or put in the background", () => {
+  const watcher = "until hc ls | grep -q watch; do sleep 30; done\nherdr-task reply 7 \"same map as phone\"";
+  // after the loop it runs only once the loop ends: still this call's own, as before (the call waits for it)
+  expect(sendsOf(watcher)).toEqual([{ to: "7", text: "same map as phone", how: "reply" }]);
+  expect(sendsOf("while true; do\n  if hc ls | grep -q watch; then\n    herdr-task reply 7 \"same map as phone\"\n    break\n  fi\n  sleep 30\ndone")).toEqual([]);
+  expect(sendsOf("if [ -e /tmp/x ]; then herdr-task reply 7 \"go\"; fi")).toEqual([]);
+  expect(sendsOf("for d in a b; do hc send t1 \"$d\"; done")).toEqual([]);
+  expect(sendsOf("notify() {\n  hc send t1 \"found it\"\n}\necho waiting")).toEqual([]);
+  expect(sendsOf("case $x in\n  y) hc send t1 \"yes\";;\nesac")).toEqual([]);
+  expect(sendsOf("hc send t1 \"later\" &")).toEqual([]);
+  // a condition runs; what follows a block is the call's own again
+  expect(sendsOf("if hc send t1 \"now\"; then echo ok; fi\nhc send t2 \"after\"")).toEqual([{ to: "t1", text: "now", how: "hc" }, { to: "t2", text: "after", how: "hc" }]);
+  expect(sendsOf("hc send t1 \"a\" && hc send t2 \"b\"")).toEqual([{ to: "t1", text: "a", how: "hc" }, { to: "t2", text: "b", how: "hc" }]);
+});
+
+test("a command run in the background is no message, whatever send line it holds; it shows as a command", async () => {
+  const bg = { type: "tool_use", id: "b1", name: "Bash", input: { command: "while ! hc ls | grep -q watch; do sleep 30; done; herdr-task reply 7 \"same map as phone\"", run_in_background: true }, caller: { type: "direct" } };
+  const c = await read([person, reply("m1", [bg]), result("b1", "Command running in background with ID: b9. Output is being written to: /tmp/b9.output.")]);
+  expect(c.items.filter((x) => x.kind === "sent")).toEqual([]);
+  expect(c.items.find((x) => x.kind === "tools").steps.map((s) => [s.id, !!s.relay])).toEqual([["b1", false]]);
+});
+
+test("a send whose command went on in the background before it ended takes its row back: not delivered, not known", async () => {
+  const c = await read([person, reply("m1", [bash("c1", 'sleep 900; herdr-task reply 7 "same map as phone"')]),
+    result("c1", "Command did not complete within its 120s timeout and was moved to the background (ID: b5). Output is being written to: /tmp/b5.output.")]);
+  expect(c.items.filter((x) => x.kind === "sent")).toEqual([]);
+  expect(c.items.find((x) => x.kind === "tools").steps.map((s) => [s.id, !!s.relay])).toEqual([["c1", false]]);
+});
+
+// A `!` command the person typed (Claude Code's bash mode, Codex's `!`): its own row, running until what it printed
+// comes, done or failed. The lines are real logs' (Claude Code 2.1.331, Codex 0.163.0).
+test("a ! command in Claude Code is a command row with what it printed", async () => {
+  let k = 0;
+  const u = (content) => ({ parentUuid: null, isSidechain: false, promptId: "p", type: "user", message: { role: "user", content }, uuid: `bang${k++}`, timestamp: at });
+  const c = await read([
+    u("<bash-input>echo hello && ls /nonexist</bash-input>"),
+    u("<bash-stdout></bash-stdout><bash-stderr>hello\nls: cannot access '/nonexist': No such file or directory\n</bash-stderr>"),
+    u("<bash-input>echo hi</bash-input>"),
+    u("<bash-stdout>hi</bash-stdout><bash-stderr></bash-stderr>"),
+    u("<bash-input>true</bash-input>"),
+    u("<bash-stdout>(Bash completed with no output)</bash-stdout><bash-stderr></bash-stderr>"),
+    u('<bash-input>sh -c "exit 3"</bash-input>'),
+    u("<bash-stdout></bash-stdout><bash-stderr></bash-stderr>"),
+    u("<bash-input>sleep 100</bash-input>"),
+  ]);
+  expect(c.items.map((x) => [x.kind, x.text, x.state, x.out])).toEqual([
+    ["command", "echo hello && ls /nonexist", "failed", "hello\nls: cannot access '/nonexist': No such file or directory"],
+    ["command", "echo hi", "done", "hi"],
+    ["command", "true", "done", ""],
+    ["command", 'sh -c "exit 3"', "failed", ""],
+    ["command", "sleep 100", "running", undefined],
+  ]);
+});
+
+test("a ! command in Codex is a command row with its exit code's state", () => {
+  const c = new Conversation("codex");
+  const line = (text) => ({ timestamp: at, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }], internal_chat_message_metadata_passthrough: { content_item_kinds: ["shell.user_command"] } } });
+  c.codex(line("<user_shell_command>\n<command>\necho hello && ls /nonexist\n</command>\n<result>\nExit code: 2\nDuration: 0.0373 seconds\nOutput:\nhello\nls: cannot access '/nonexist': No such file or directory\n\n</result>\n</user_shell_command>"), 1);
+  c.codex(line("<user_shell_command>\n<command>\necho hi\n</command>\n<result>\nExit code: 0\nDuration: 0.01 seconds\nOutput:\nhi\n</result>\n</user_shell_command>"), 2);
+  expect(c.items.map((x) => [x.kind, x.text, x.state, x.out])).toEqual([
+    ["command", "echo hello && ls /nonexist", "failed", "hello\nls: cannot access '/nonexist': No such file or directory"],
+    ["command", "echo hi", "done", "hi"],
+  ]);
 });

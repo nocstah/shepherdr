@@ -145,9 +145,10 @@ BEGIN { pos = base; first = base; msgs = 0 }
     if (match(line, /"(backgroundTaskId|taskId|agentId)":"[^"]+"/)) { m = substr(line, RSTART, RLENGTH); sub(/^"[A-Za-z]*":"/, "", m); sub(/"$/, "", m); ids = ids " TASK=" m }
     print off "\tR\t" ids
     # An answer to a question, or words that declined a request: read whole (answers()). Else what a send to
-    # another agent came back with (delivered, held, not delivered): read whole too (delivery()).
+    # another agent came back with (delivered, held, not delivered, or its command moved to the background): read whole
+    # too (delivery()).
     if (claude && length(line) <= 262144 && ((index(line, "\"answers\":{") && index(line, "\"questions\":[")) || index(line, "wrote in the chat instead: "))) print off "\tJ\t" line
-    else if (length(line) <= 65536 && (index(line, "elivered") || index(line, ": sent to ") || index(line, "\"is_error\":true") || (codex && match(line, /[Ee]xit[_ ]code[^0-9]?[^0-9]?[^0-9]?[^0-9]?[1-9]/)))) print off "\tJ\t" line
+    else if (length(line) <= 65536 && (index(line, "elivered") || index(line, ": sent to ") || index(line, "moved to the background") || index(line, "\"is_error\":true") || (codex && match(line, /[Ee]xit[_ ]code[^0-9]?[^0-9]?[^0-9]?[^0-9]?[1-9]/)))) print off "\tJ\t" line
     next
   }
   # The queue of messages typed while Claude Code works: what goes in (the words of the person)
@@ -472,7 +473,13 @@ export function sendsOf(command) {
       continue;
     }
     if (c === " " || c === "\t") { end(); i++; continue; }
-    if (c === ";" || c === "|" || (c === "&" && s[i - 1] !== ">" && s[i + 1] !== ">")) { done(); i += s[i + 1] === c ? 2 : 1; continue; }
+    if (c === ";" || c === "|" || (c === "&" && s[i - 1] !== ">" && s[i + 1] !== ">")) {
+      // `cmd &` only starts it: what it may send later isn't sent by this call
+      const alone = c === "&" && s[i + 1] !== "&";
+      done();
+      if (alone && cmds.length) cmds[cmds.length - 1].bg = true;
+      i += s[i + 1] === c ? 2 : 1; continue;
+    }
     if (c === "#" && !w) { while (i < s.length && s[i] !== "\n") i++; continue; }
     if (c === "<" && s[i + 1] === "<" && s[i + 2] !== "<") {
       end();
@@ -498,9 +505,27 @@ export function sendsOf(command) {
   }
   done();
   const out = [];
+  // the shell's blocks open around a command: a send in a loop's or an if's body, or a function's, may never run
+  // (a watcher that replies once a device turns up), so it is no message this call sent. A condition (`if hc send …`)
+  // runs, outside any body.
+  const blocks = [];
   for (const cmd of cmds) {
-    // NAME=value words before a command (or alone) set a variable for what follows
     let k = 0;
+    let body = blocks.includes("body");
+    for (;;) {
+      const w0 = cmd[k]?.text;
+      if (w0 === "if" || w0 === "while" || w0 === "until" || w0 === "for" || w0 === "select") { blocks.push("head"); k++; }
+      else if (w0 === "case") { blocks.push("body"); body = true; k++; }
+      else if (w0 === "then" || w0 === "do" || w0 === "else" || w0 === "elif") { if (blocks.length) blocks[blocks.length - 1] = "body"; body = true; k++; }
+      else if (w0 === "fi" || w0 === "done" || w0 === "esac") { blocks.pop(); k++; body = blocks.includes("body"); }
+      else if (w0 === "function" || /^[A-Za-z_][\w-]*\(\)$/.test(w0 ?? "")) { blocks.push("fn"); body = true; k = cmd.length; }
+      else if (w0 === "}" && blocks[blocks.length - 1] === "fn") { blocks.pop(); k++; body = blocks.includes("body") || blocks.includes("fn"); }
+      else if (w0 === "{" || w0 === "!") k++;
+      else break;
+    }
+    if (blocks.includes("fn")) body = true;
+    if (body || cmd.bg) continue;
+    // NAME=value words before a command (or alone) set a variable for what follows
     while (k < cmd.length && /^[A-Za-z_]\w*=/.test(cmd[k].text)) {
       const eq = cmd[k].text.indexOf("=");
       vars.set(cmd[k].text.slice(0, eq), cmd[k].text.slice(eq + 1));
@@ -554,6 +579,9 @@ export function sendsOf(command) {
   }
   return out;
 }
+
+// A Bash call's result when the command went on in the background instead of ending (past its timeout, or put there).
+const MOVED = /\bmoved to the background\b|^Command running in background with ID:/im;
 
 // One tool call in words: its kind (for the summary) and a line for the open row.
 // A command that only waits (hc wait, sleep): what it waits for, in words; else null. While
@@ -753,6 +781,8 @@ function agyStep(name, a = {}) {
 //                                             out: where the call's result line is)
 //   { kind: "ask", id, text, questions?, closed? }  (the agent's own question tool, Codex's with its questions; closed once its dialog
 //                                          is gone: "answered" | "dismissed")   { kind: "error", id, text }
+//   { kind: "command", id, at, text, state, out? }  (a `!` command the person ran in the agent's shell: running | done |
+//                                          failed, out: what it printed, its end kept when long)
 // `doing` is what it does right now (the last call not answered yet), for the status line.
 // `meta` is what the agent runs on, from its newest lines: { model, effort, speed, used, window }
 // (used: tokens in its context window now; window: that window's size when the log says it;
@@ -771,6 +801,37 @@ export function claudeSwitch(text) {
   if (m) return { effort: m[1] };
   m = /^Fast mode (ON|OFF)\b/.exec(t);
   if (m) return { speed: m[1] === "ON" ? "fast" : "standard" };
+  return null;
+}
+
+// A `!` command the person ran in the agent's own shell (Claude Code's bash mode, Codex's `!`), from a user line's
+// text. Claude Code logs it as two lines: <bash-input>cmd</bash-input>, then <bash-stdout>…</bash-stdout><bash-stderr>…
+// </bash-stderr> (all it printed goes to stdout when it ran fine, to stderr when it failed; both empty: it failed
+// silently; "(Bash completed with no output)": fine, nothing printed). Codex logs one: <user_shell_command><command>…
+// </command><result>Exit code: N … Output: …</result></user_shell_command>.
+// -> { cmd } (it started), { out, state } (what it printed: done | failed), { cmd, out, state } (both), or null.
+const CMD_OUT = 8000;
+const cmdOut = (s) => {
+  const t = String(s ?? "").replace(/\s+$/, "");
+  return t.length > CMD_OUT ? `…${t.slice(-CMD_OUT)}` : t;
+};
+export function shellRun(text) {
+  const t = String(text ?? "");
+  let m = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/.exec(t);
+  if (m) return m[1].trim() ? { cmd: m[1].trim() } : null;
+  m = /^\s*<bash-stdout>([\s\S]*?)<\/bash-stdout>\s*<bash-stderr>([\s\S]*?)<\/bash-stderr>\s*$/.exec(t);
+  if (m) {
+    const stdout = m[1].trim() === "(Bash completed with no output)" ? "" : m[1];
+    const ok = Boolean(m[1].trim());
+    return { out: cmdOut(ok ? stdout || m[2] : m[2]), state: ok ? "done" : "failed" };
+  }
+  m = /^\s*<user_shell_command>\s*<command>([\s\S]*?)<\/command>\s*(?:<result>([\s\S]*?)<\/result>)?\s*<\/user_shell_command>\s*$/.exec(t);
+  if (m && m[1].trim()) {
+    const r = m[2] ?? "";
+    const code = /^\s*Exit code:\s*(-?\d+)/m.exec(r);
+    const out = /^Output:\n?([\s\S]*)$/m.exec(r);
+    return { cmd: m[1].trim(), out: cmdOut(out ? out[1] : r.trim()), state: code && code[1] === "0" ? "done" : "failed" };
+  }
   return null;
 }
 
@@ -802,6 +863,8 @@ export class Conversation {
     this.helpers = new Map();
     // The messages each call sent other agents (sent()), by its id, until its result says whether they got there.
     this.sentBy = new Map();
+    // the rows each such call made (not the ones it sent again), to take back when its command went on in the background
+    this.madeBy = new Map();
     this.questions = new Map();
     // Claude Code's queue of what was typed while it works, in order: { id, raw, at, text?,
     // images? } (text only for the person's words; a job's end has a place too).
@@ -815,6 +878,19 @@ export class Conversation {
   push(item) {
     this.items.push(item);
     return item;
+  }
+
+  // A `!` command the person ran (shellRun): its row ({ kind: "command", id, at, text, state, out? }), running until
+  // what it printed comes. A command whose end never came (cut from the log) shows as done once the chat moves on.
+  command(run, off, at) {
+    const open = this.items.findLast((x) => x.kind === "command" && x.state === "running");
+    if (run.cmd) {
+      if (open) open.state = "done";
+      this.push({ kind: "command", id: `k${off}`, at, text: run.cmd, state: run.state ?? "running", ...(run.state ? { out: run.out } : {}) });
+    } else if (open) {
+      open.state = run.state;
+      open.out = run.out;
+    }
   }
 
   // The messages a command sent other agents (sendsOf), each its own item after the call's row:
@@ -837,7 +913,12 @@ export class Conversation {
     sends.forEach((m, i) => {
       const again = turn.find((x) => x.kind === "sent" && x.to === m.to && x.text === m.text);
       if (again) { delete again.state; delete again.why; by(again); return; }
-      by(turn[turn.push(this.push({ kind: "sent", id: `s${off}:${i}`, at, ...m })) - 1]);
+      const x = turn[turn.push(this.push({ kind: "sent", id: `s${off}:${i}`, at, ...m })) - 1];
+      by(x);
+      if (call) {
+        this.madeBy.set(call, [...(this.madeBy.get(call) ?? []), x]);
+        if (this.madeBy.size > 200) this.madeBy.delete(this.madeBy.keys().next().value);
+      }
     });
   }
 
@@ -850,11 +931,23 @@ export class Conversation {
     const mine = this.sentBy.get(call);
     if (!mine?.length) return;
     const t = String(words ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").trim();
+    // The command went on in the background before it ended (Claude Code moves one past its timeout there): whether
+    // it sends anything is unknown, so its messages are no rows; the call shows as an ordinary command.
+    if (!failed && MOVED.test(t)) {
+      const gone = new Set(this.madeBy.get(call) ?? []);
+      for (let i = this.items.length - 1; i >= 0; i--) if (gone.has(this.items[i])) this.items.splice(i, 1);
+      this.madeBy.delete(call);
+      for (const x of mine) { delete x.state; delete x.why; delete x.call; }
+      this.sentBy.delete(call);
+      const step = this.calls.get(call) ?? this.items.flatMap((x) => (x.kind === "tools" ? x.steps : [])).find((x) => x.id === call);
+      if (step) delete step.relay;
+      return;
+    }
     const no = /Not delivered to [^:\n]*: ?([^\n]*)/.exec(t);
     let state = "delivered", why = "";
     if (/Not delivered yet|\bheld for\b|\bkept for\b|"held":\s*true/.test(t)) {
       state = "waiting";
-      why = /: (the person is writing[^\n.;]*|its agent[^\n.;]*)/.exec(t)?.[1] ?? "";
+      why = /: (the person is writing[^\n.;]*|its agent[^\n.;]*|\S+ can't be reached from here)/.exec(t)?.[1] ?? "";
     } else if (no || failed) {
       state = "failed";
       why = (no?.[1] ?? t.split("\n").map((l) => l.replace(/^(Error|error|herdr-task|hc):\s*/, "").trim()).find((l) => l && !/^Exit code/.test(l)) ?? "").replace(/\.$/, "");
@@ -923,6 +1016,13 @@ export class Conversation {
       replyTo = u.quoted;
       text = u.rest;
     }
+    // Claude Code logged this very message already, taken in mid-turn (its queued_command), and logs it again when a
+    // stopped turn hands it back (or the other way round): it is one message, shown once. The same words again after
+    // the agent answered, or a while later, are a message of their own.
+    const li = this.items.findLastIndex((x) => x.kind === "user");
+    const prev = li >= 0 ? this.items[li] : null;
+    if (prev && prev.text === text && !prev.from && !u.from && (prev.images || 0) === (u.images || 0) && Math.abs((u.at ?? 0) - (prev.at ?? 0)) < 10 * 60_000
+      && !this.items.slice(li + 1).some((x) => x.kind === "agent" || x.kind === "ask" || x.kind === "user")) return;
     // a new message from the person: no step of an earlier turn is still running (SHEP-430)
     this.open.clear();
     this.waits.clear();
@@ -1153,6 +1253,9 @@ export class Conversation {
         return;
       }
       if (l.isCompactSummary || l.isVisibleInTranscriptOnly) return;
+      // a `!` command the person ran in its shell (bash mode): its own row, with what it printed
+      const run = typeof l.message?.content === "string" ? shellRun(l.message.content) : null;
+      if (run) { this.command(run, off, time(l.timestamp)); return; }
       if (Array.isArray(l.message?.content) && l.message.content.some((b) => b?.type === "tool_result")) { this.answers(l, off); return; }
       if (l.origin?.kind && l.origin.kind !== "human") return;
       const u = claudeUser(l.message?.content);
@@ -1213,7 +1316,8 @@ export class Conversation {
             if (st) st.at = time(l.timestamp) || Date.now();
             this.step(String(b.id), off, st, b.name === "Agent" || b.name === "Task" ? String(b.id) : null);
             if (b.name === "Bash" && ARTIFACT.test(String(b.input?.command ?? ""))) this.push({ kind: "artifact", id: `art${off}`, at: time(l.timestamp) });
-            if (b.name === "Bash") this.sent(String(b.input?.command ?? ""), off, time(l.timestamp), String(b.id));
+            // a command run in the background only starts: a send in it is no message yet (it may never run)
+            if (b.name === "Bash" && !b.input?.run_in_background) this.sent(String(b.input?.command ?? ""), off, time(l.timestamp), String(b.id));
           }
         }
       }
@@ -1226,6 +1330,9 @@ export class Conversation {
     if (l.type === "response_item") {
       if (p.type === "message" && p.role === "user") {
         const items = Array.isArray(p.content) ? p.content : [];
+        // a `!` command the person ran in Codex's shell: its own row, with what it printed and its exit code
+        const run = items.length === 1 && typeof items[0]?.text === "string" ? shellRun(items[0].text) : null;
+        if (run?.cmd) { this.command(run, off, time(l.timestamp)); return; }
         const kinds = p.internal_chat_message_metadata_passthrough?.content_item_kinds;
         const words = items.map((it, i) => {
           if (it?.type !== "input_text" || typeof it.text !== "string") return "";
@@ -1380,14 +1487,14 @@ export class Conversation {
         if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
       }
     } else if (l.type === "SHELL_EXEC") {
-      // a `!` command the person ran in its terminal (a version that logs it): theirs, and its output under it
+      // a `!` command the person ran in its shell mode (a version that logs it): its command row, as Claude Code's and
+      // Codex's, with what it printed; failed when its line says ERROR or has an error
       const cmd = String(l.command ?? "").trim();
       if (!cmd) return;
-      this.user(`u${off}`, { text: `!${cmd}`, at });
-      const id = `x${off}`;
-      this.step(id, off, { kind: "run", line: `Ran ${clip(cmd, 80)}`, doing: `Running ${cmdWords(cmd)}` });
-      this.done(id, off);
-      this.doing = null;
+      const said = (v) => (typeof v === "string" && v.trim() ? v : "");
+      const err = said(l.error) || said(l.error_message);
+      const out = [said(l.output) || said(l.content), err].filter(Boolean).join("\n");
+      this.command({ cmd, out: cmdOut(out), state: l.status === "ERROR" || err ? "failed" : "done" }, off, at);
     } else if (l.type === "ERROR_MESSAGE") {
       const err = String(l.error ?? "").trim();
       if (err) this.push({ kind: "error", id: `e${off}`, text: err, at });

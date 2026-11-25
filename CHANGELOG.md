@@ -18,6 +18,131 @@ Tasks and a space's chat can run on Antigravity, Google's agent, as well as on C
 - A space's chat can run on Antigravity: pick it from the chat's model button, before its first message or to switch
   a running one, or for every chat in Settings › Agents › Chats. It starts with its instructions and your settings,
   gets the news of its tasks and your settings' changes, and a restart goes back to its own conversation.
+- A line starting with `!` runs in Antigravity's own shell mode too, and shows as the same command row as Claude Code's
+  and Codex's, with what it printed.
+
+## 3.2.18
+
+A Cmd+K palette and shortcuts for everything, long pastes fold away, `!` commands show in the chat, and the chat
+no longer flickers while you type.
+
+### Shortcuts
+
+- ⌘K (Ctrl+K) opens a palette that finds anything and runs any command; `?` shows every shortcut, and Settings ›
+  Shortcuts lists them.
+
+### Chat
+
+- A long paste (25 lines or 2,500 characters and up) becomes a small chip in the message box: open it to read, put it
+  back in the box to edit, or remove it. It is sent exactly as pasted. A long message in the chat shows folded with
+  Show more.
+- A line starting with `!` runs as a command in Claude Code's or Codex's own shell, and now shows in the chat as a
+  command row with its state and what it printed. The box shows when it is in command mode.
+- The chat holds still while you type: on Safari it no longer jumps up and down on every key.
+- Suggested reply bubbles are never cut off: agents keep each one short, and the app shows every bubble whole.
+
+### Notices
+
+- Toasts stay long enough to read, wait while you hover them or the tab is in the background, stack up to three and
+  each has a close button (Escape too). An error that asks you to do something stays until you close it.
+
+### Voice
+
+- Settings › Voice now holds the ElevenLabs key: add, test, replace or remove it there. It is the same key as the
+  ELEVENLABS_API_KEY secret, so nothing to redo if you already have one. Talk or the mic without a key opens the page.
+
+### Artifacts
+
+- A proof page scrolls while its Mark up box is open, and a Reply box inside a page no longer breaks it with
+  "Couldn't show this page".
+
+## 3.2.17
+
+Suggested replies no longer vanish when news or a message from another agent arrives.
+
+### Chat
+
+- The reply bubbles under an Assistant's message now stay when another Assistant's message, a news line or a quiet
+  turn comes in after it. They go only when you write or the Assistant really replies again, in the chat and in the
+  phone and watch feed.
+- A message from another Assistant no longer shows as if you wrote it.
+
+## 3.2.16
+
+Agents with a command running in the background no longer look busy, and dictation no longer flashes "allow the
+microphone" when it is already allowed.
+
+### Agents and chat
+
+- An agent that finished its turn but left a command running in the background now shows as at rest: no typing dots,
+  no Stop button, not counted as Working and no "still working" alerts. The chat shows a quiet "1 background command
+  running" line instead.
+- A message an agent only wrote inside a background command, a loop or a function no longer shows as a "Message to …
+  · Delivered" row: only a message it really sent does.
+
+### Dictation
+
+- The "allow the microphone" hint no longer flashes, or stays up, when the microphone is already allowed (seen in the
+  installed Android app). It shows only while a prompt is really waiting and goes the moment the microphone is ready.
+- When the microphone is blocked in the Android app, Shepherdr says to turn it on in the phone's settings for the app.
+
+## 3.2.15
+
+Shepherdr now keeps a private record of how you use it, for you and your agents, and messages you send quickly to an
+agent arrive one by one.
+
+### Personal analytics
+
+- Shepherdr keeps a record of how you use it: messages sent and how (typed, dictated, a suggested reply or Talk),
+  tasks and how long they waited, schedules, failures. Never what was said: no message text, titles or secrets.
+- It stays on your machines and is never sent to anyone, not to Shepherdr's makers either.
+- Settings › Personal analytics shows the main numbers for a day, week or month, lists every event as kept, and can
+  export, switch it off or delete it all on every machine. It is on by default; a quiet note says so once.
+- Ask your Assistant "how do I use Shepherdr, and what should I change?": it reads the record and answers. Agents use
+  `herdr-task analytics`.
+
+### Sending to agents
+
+- Two messages sent to one agent at once no longer arrive glued together as one: they go one at a time, and the chat
+  shows each one once.
+- A message Claude Code takes mid-turn no longer shows twice in the chat.
+- A chat that went quiet on screen notices a dead link and reconnects, so replies keep coming.
+
+## 3.2.14
+
+Buttons react the moment you tap them, dictation keeps your first words, and an Assistant's answer from a machine that
+can't reach yours still arrives.
+
+### Buttons
+
+- A button looks pressed as soon as you tap it, then says what it's doing with a small spinner; the other buttons on
+  the card wait until it's done, and a failure shows on the card itself.
+- After an action on another machine's task, its task list is read again right away, so the row changes at once.
+
+### Dictation
+
+- The wave that says "start talking" now shows only once the microphone really hears you. Until then a quiet dot shows
+  that it's getting ready, so a phone no longer loses your first words.
+
+### Assistants on other machines
+
+- When an Assistant answers a machine it can't reach, the answer waits on its own machine and yours fetches it, for up
+  to 12 hours. It shows in the chat as an incoming message, and the sender's row says it's waiting and why.
+
+## 3.2.13
+
+The phone and watch app can see more: your spaces, unread chats, failed schedules, machines in trouble and how much
+plan is left.
+
+### The phone and watch app
+
+- It gets your spaces, last used first, so a new task can be started by voice by sending it to a space's Assistant.
+- Ready tasks say whether their review passed, whether their checks are green and how many proof pages they have, so
+  "Mark as done" is offered only when nothing is red.
+- Chats with a message you haven't read come with the Assistant's newest words, to read or answer from the wrist.
+- A schedule that failed, a machine that can't be reached or is nearly out of memory now buzz the watch too.
+- It shows how much of your plan is left, and can open a whole chat, write in it and mark it read with a much lighter
+  call than the web page uses.
 
 ## 3.2.12
 

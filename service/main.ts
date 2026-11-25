@@ -34,6 +34,7 @@ import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, sc
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
 import { act, findMachines, firstWhenIdle, hc as hcRun } from "./actions.ts";
+import { analyticsAction, howOf, noteVersion, record as note } from "./analytics.ts";
 import { AgentWatch } from "./watch.ts";
 import { Compat, activity, newsKey, placeKey } from "./compat.ts";
 import { keep, served as fileResponse, smaller } from "./media.ts";
@@ -54,12 +55,12 @@ import { Agents } from "./agents.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
 import { waiting } from "../web/shared/alerts.ts";
-import { GlanceFeed, MAX_CHATS, glanceOf, openUrlOk } from "./glance.ts";
+import { GlanceFeed, MAX_CHATS, glanceOf, openUrlOk, saidToPerson } from "./glance.ts";
 import { chatPage } from "./native-chat.ts";
 import { unreadChats } from "../web/shared/needs-you.ts";
 import type { Watcher } from "./chats.ts";
 import { Shows } from "./show.ts";
-import { dictate, liveToken, cachedKey, refused } from "./dictate.ts";
+import { dictate, liveToken, cachedKey, refused, forgetKey, checkVoiceKey } from "./dictate.ts";
 import { readUsage } from "../core/voice.js";
 import { sh, exec } from "./model.ts";
 import { existedWords, folders, newSpace, newSpaceInfo } from "./spaces.ts";
@@ -124,6 +125,7 @@ const SERVICE_FILE = join(DATA, "service.json");
 
 const hub = new Hub();
 const host = new Host(hub, VERSION);
+noteVersion(VERSION);
 await Promise.race([host.start(), Bun.sleep(10_000)]);
 const store = new Store(hub, host);
 new Sync(hub, host).start();
@@ -180,8 +182,9 @@ const lastSaid = (key: string) => {
 // a chat's newest message with words (the person's or its agent's), for the glance's suggested replies
 const lastWords = (key: string) => {
   const a = compat.addrOf(key), items: any[] = (a ? live.chats?.reader(a)?.conv?.items : null) ?? [];
-  // as the chat lists them (compat.ts): its words, a message it sent another agent (no bubbles), the person's
-  const m = items.findLast((x) => (x.kind === "agent" || x.kind === "sent" || x.kind === "user") && x.text);
+  // as the chat lists them (compat.ts): its words or the person's; messages between agents (another agent's in, one it
+  // sent) never clear the bubbles, as web/plugins/chat/suggest.ts suggestionOf
+  const m = items.findLast(saidToPerson);
   return m ? { who: m.kind === "user" ? "you" as const : "agent" as const, text: m.text as string, ...(m.kind === "agent" ? { suggests: m.suggests as string[] | undefined } : {}) } : null;
 };
 // SHEP-447: an unread Assistant chat's newest words, for the glance feed's chats: Chats reads a chat only while someone
@@ -602,7 +605,7 @@ const voiceIO: VoiceIO = {
       return out;
     } finally { f.stop(); }
   },
-  async send(key, text) { await act(hub, { type: "send", chat: key, text, human: true }, compat); },
+  async send(key, text) { await act(hub, { type: "send", chat: key, text, human: true }, compat); note("message.sent", { chat: key, how: "talk" }); },
   async action(body) {
     const answeredAt = Date.now();
     const r = await doAction(body);
@@ -668,11 +671,16 @@ const voiceIO: VoiceIO = {
         return folders(hub, machine, path || "~", home);
       }
       case "me": return { machine: me?.host ?? null, link: ownLink(), version: VERSION, off: offPlugins() };
+      // personal analytics, as `herdr-task analytics` sums them up (service/analytics.ts)
+      case "insights": return action({ type: "analytics", do: "show", days: path === "day" ? 1 : path === "week" ? 7 : 30 });
     }
     throw new Error(`No such data: ${source}.`);
   },
 };
 
+
+/** The person's calls on a task that change its state (its list says so): read again once done (model.reread). */
+const TASK_ACTS = new Set(["accept", "close", "delete", "archive", "reopen", "task-resume", "task-start", "task-move", "task-rename", "schedule"]);
 
 /** One of the web app's actions (an Action, POST /api/action), as the page sends it: a voice call's acts go here too. */
 async function doAction(body: any): Promise<Response> {
@@ -681,6 +689,11 @@ async function doAction(body: any): Promise<Response> {
     const done = await artifactAction(body).catch((e) => ({ ok: false, error: (e as Error).message }));
     if (done) { void artifacts.read(); return json(done); }
   }
+  // Settings › Personal analytics, and the page's own events for it (service/analytics.ts)
+  if (body?.type === "analytics") {
+    try { return json(await analyticsAction(body, (key, value) => { setConfig("all", key, value); model.rebuild(); })); }
+    catch (err) { return json({ ok: false, error: (err as Error).message }); }
+  }
   // 3.2's settings window: one value for everything ("all") or a space; null puts a space's row back (Reset)
   if (body?.type === "config" && typeof body.key === "string") {
     try {
@@ -688,6 +701,7 @@ async function doAction(body: any): Promise<Response> {
       // a repo's (SHEP-335): a space sitting on it goes along, for what a file not moved yet still keeps there
       const sp = place === "all" ? null : (model.spaces as any[]).find((x) => (place.startsWith("repo:") ? spaceRepo(x) === place.slice(5) : x.id === place));
       setConfig(place, body.key, body.value ?? null, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder: sp.folder ?? null, repo: spaceRepo(sp) } : null);
+      note("settings.changed", { key: body.key, space: place === "all" ? undefined : place });
       model.rebuild();
       return json({ ok: true });
     } catch (err) { return json({ ok: false, error: (err as Error).message }); }
@@ -784,6 +798,7 @@ async function doAction(body: any): Promise<Response> {
       const card = body.card && typeof body.card.chat === "string" ? { address: compat.addrOf(body.card.chat) ?? "" } : undefined;
       if (card && !card.address) throw new Error("That agent isn't here any more.");
       await secrets.keep(body.level, body.name, typeof body.value === "string" ? body.value : null, card);
+      if (body.name === "ELEVENLABS_API_KEY") forgetKey();
       await refreshSecrets();
       return json({ ok: true });
     } catch (err) { return new Response((err as Error).message, { status: 400 }); }
@@ -826,6 +841,8 @@ async function doAction(body: any): Promise<Response> {
     try { return json({ ok: true, text: settings.template(body.role, typeof body.text === "string" ? body.text : undefined) }); }
     catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
+  // Settings › Voice's test: whether the ElevenLabs key works, in plain words (never the key)
+  if (body?.type === "voice-check") return json(await checkVoiceKey(hub));
   if (body?.type === "limits-check") { await machines.checkNow(); return json({ ok: true }); }
   if (body?.type === "secrets-move") {
     // Settings › Secrets › Kept on: the vault moves (shepherdr secrets move-to); the page sees it as it goes
@@ -850,9 +867,19 @@ async function doAction(body: any): Promise<Response> {
     catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
   try {
+    // a task acted on: where its list is, to read it again once it is done (below)
+    const ref = typeof body?.task === "string" ? body.task : typeof body?.chat === "string" ? body.chat.split("/")[0] : null;
+    const onTask = TASK_ACTS.has(body?.type) && ref ? compat.taskOf(ref) : null;
     const r = await act(hub, body, compat);
+    // personal analytics: that it happened and how, never what was said (service/analytics.ts)
+    if (body?.type === "send" && typeof body.chat === "string" && !body.was) note("message.sent", { chat: body.chat, how: howOf(body.how) });
+    else if (body?.type === "answer" && typeof body.chat === "string")
+      note("question.answered", { chat: body.chat, how: body.byVoice || body.talk ? "talk" : typeof body.choice === "number" || Array.isArray(body.choices) ? "pick" : "typed" });
     // the list of spaces changed (renamed, removed): shown in the answer's snapshot, not at the next event
     if (body?.type === "rename" || body?.type === "space-remove") model.rebuild();
+    // a task on another machine: its new state read now, so the card changes with this answer, not up to 10 s later
+    // (bounded: a slow link still answers)
+    if (onTask?.machine && (r as any)?.ok !== false) await Promise.race([model.reread(onTask.machine), Bun.sleep(4000)]);
     return json(r);
   } catch (err) { return new Response((err as Error).message, { status: 400 }); }
 }

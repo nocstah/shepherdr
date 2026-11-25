@@ -9,10 +9,12 @@ import { everything, placeOf, taskChat, taskOf, type ListFilter, type Space } fr
 import { clean, NO_FILTER, type TaskFilter } from '@shared/task-filter.ts'
 import type { IconName } from './icons.ts'
 import { catchLink } from './applink.ts'
-import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
+import { heartbeatDue, OPEN_WITHIN, PONG_LATE, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
 import { expire, loadOutbox, prune, saveOutbox, settle, type Outgoing } from './outbox.ts'
 import { setupGuarded } from './guard.tsx'
 import { HttpError, wakeAll } from './uploads.ts'
+import { SHOW_AFTER } from './pending.ts'
+import { dismiss, toast, type ToastOpts } from './toasts.ts'
 
 /* ---------- the places plugins fill ---------- */
 
@@ -41,7 +43,32 @@ export interface MenuRow {
   on?: boolean
   /** rows it folds open to (Move to group) */
   sub?: MenuRow[]
+  /** the command it is too: its shortcut shows at the row's end */
+  cmd?: string
   run?: () => void
+}
+
+/** One thing the app can do, from the palette (Cmd+K) and by its shortcut. A plugin registers its own; a plugin
+ *  switched off takes them with it. Its id is what Settings › Shortcuts keeps a changed shortcut under: never rename one. */
+export interface Command {
+  /** "<plugin>.<what>", e.g. "tasks.open" */
+  id: string
+  title: string
+  /** the sheet's and Settings › Shortcuts' heading it goes under: General, Go to, Spaces, Chat, Tasks, Terminal, Voice */
+  area: string
+  icon?: IconName
+  /** the shortcuts it has unless changed, written for every computer: "Mod+K" (⌘K on a Mac, Ctrl+K elsewhere),
+   *  "Ctrl+`" (the Control key on a Mac too), "Shift+/" (?), "G T" (G, then T) */
+  keys?: string[]
+  /** more words the palette finds it by */
+  words?: string
+  /** it can run now (a task is open, a pane is there): otherwise its shortcut passes and the palette leaves it out */
+  when?: () => boolean
+  run: () => void
+  /** its shortcut works while a terminal has the keys too: only the palette and your own terminal */
+  terminal?: boolean
+  /** by its shortcut only, not a row of the palette (Space 1–9) */
+  hidden?: boolean
 }
 
 export interface Pane {
@@ -130,8 +157,10 @@ export interface Registry {
   topBars: FC[]
   /** sections of the settings window */
   settings: SettingsSection[]
-  /** keyboard: true when handled */
+  /** keyboard: true when handled (before the commands' shortcuts) */
   keys: { order: number; handle: (e: KeyboardEvent) => boolean }[]
+  /** what the palette and the shortcuts run (commands.ts) */
+  commands: Command[]
   /** a wake word on this device: the voice plugin starts a call */
   voiceWake: (() => void) | null
 }
@@ -140,7 +169,7 @@ export const registry: Registry = {
   views: {},
   header: [], taskHeader: [], panes: [], bar: [], spaceMenu: [], taskMenu: [], messageParts: [], messageEdge: [], messageQuick: [],
   messageMenu: [], chatCards: [], chatTail: [], chatBody: [], aboveBox: [], boxButtons: [], drawer: [], sideHead: [], overlays: [], topBars: [], settings: [],
-  keys: [], voiceWake: null, middle: [],
+  keys: [], commands: [], voiceWake: null, middle: [],
 }
 
 export interface ClientPlugin {
@@ -511,44 +540,35 @@ export async function act<T = { ok?: boolean; error?: string; [k: string]: unkno
   return r.json().catch(() => ({})) as Promise<T>
 }
 
-/** an action whose failure is said in a small notice instead of thrown */
-export async function tryAct(a: { type: string } & Record<string, unknown>, done?: string): Promise<boolean> {
+/** an action asked of the server: null when it said yes, else its words why not (never thrown) */
+export async function attempt(a: { type: string } & Record<string, unknown>): Promise<string | null> {
   try {
     const r = await act(a)
-    if (r.ok === false) {
-      notice(r.error || 'That did not work.')
-      return false
-    }
-    if (done) notice(done)
-    return true
+    return r.ok === false ? r.error || 'That did not work.' : null
   } catch (e) {
-    notice(e instanceof Error && e.message ? e.message : 'That did not work.')
-    return false
+    return e instanceof Error && e.message ? e.message : 'That did not work.'
   }
 }
 
-/* a small notice at the top (the design system's toast) */
-let noticeText: string | null = null
-let noticeTimer: ReturnType<typeof setTimeout> | null = null
-const noticeListeners = new Set<() => void>()
-/** ms: how long it stays (a longer one for words to read) */
-export function notice(text: string, ms = 2600) {
-  noticeText = text
-  if (noticeTimer) clearTimeout(noticeTimer)
-  noticeTimer = setTimeout(() => {
-    noticeText = null
-    noticeListeners.forEach((l) => l())
-  }, ms)
-  noticeListeners.forEach((l) => l())
+/** an action whose failure is said in a small notice instead of thrown. `doing`: what it does, said in the notice with
+ *  a spinner while it takes longer than a moment (a menu's row is gone once tapped: the notice is its answer) */
+export async function tryAct(a: { type: string } & Record<string, unknown>, done?: string, doing?: string): Promise<boolean> {
+  let spin = 0
+  const busy = doing ? setTimeout(() => (spin = notice(doing, { busy: true })), SHOW_AFTER) : null
+  const error = await attempt(a)
+  if (busy) clearTimeout(busy)
+  if (spin) dismiss(spin)
+  if (error !== null) notice(error, { tone: 'error' })
+  else if (done) notice(done, { tone: 'ok' })
+  return error === null
 }
-export const useNotice = () =>
-  useSyncExternalStore(
-    (l) => {
-      noticeListeners.add(l)
-      return () => void noticeListeners.delete(l)
-    },
-    () => noticeText,
-  )
+
+/* a small notice at the top (the design system's toast): toasts.ts holds how long each stays and when it waits */
+/** shows a toast and returns its id; a number is the old form's least time in ms, `busy` a spinner beside its words */
+export function notice(text: string, o: ToastOpts | number = {}, busy = false): number {
+  return toast(text, typeof o === 'number' ? { ms: o, busy } : o)
+}
+export { dismiss as dismissNotice }
 
 let tries = 0
 let retrying: ReturnType<typeof setTimeout> | null = null
@@ -558,6 +578,8 @@ let saying: ReturnType<typeof setTimeout> | null = null
 let downSince: number | null = null
 let pruned = false
 let tried = 0
+/** when the link last heard from the server */
+let heard = 0
 
 export function connect() {
   if (retrying) clearTimeout(retrying)
@@ -570,6 +592,7 @@ export function connect() {
   opening = setTimeout(() => drop(sock), OPEN_WITHIN)
   sock.onopen = () => {
     clearTimeout(opening!)
+    heard = Date.now()
     tries = 0
     downSince = null
     if (saying) clearTimeout(saying)
@@ -581,6 +604,7 @@ export function connect() {
     watchVisible()
   }
   sock.onmessage = (ev) => {
+    heard = Date.now()
     if (pinging) clearTimeout(pinging)
     pinging = null
     if (typeof ev.data !== 'string') return
@@ -667,6 +691,16 @@ function wake() {
 }
 
 if (typeof document !== 'undefined') {
+  // on screen, a quiet link is checked now and then: one dead without closing is replaced, and its chats come again
+  setInterval(() => {
+    if (ws?.readyState !== WebSocket.OPEN || !heartbeatDue(Date.now(), heard, document.visibilityState === 'visible', !!pinging)) return
+    const sock = ws
+    pinging = setTimeout(() => {
+      tries = 0
+      drop(sock)
+    }, PONG_LATE)
+    sock.send(JSON.stringify({ type: 'ping' }))
+  }, 5000)
   document.addEventListener('visibilitychange', wake)
   addEventListener('pageshow', (e) => (e as PageTransitionEvent).persisted && wake())
   addEventListener('online', wake)
@@ -742,7 +776,7 @@ if (typeof window !== 'undefined') {
     if (!said || document.visibilityState !== 'visible') return
     document.removeEventListener('visibilitychange', say)
     after.said = null
-    setTimeout(() => notice(said, 4000), 600)
+    setTimeout(() => notice(said, { ms: 5000 }), 600)
   }
   if (after.said) {
     document.addEventListener('visibilitychange', say)

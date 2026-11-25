@@ -103,9 +103,10 @@ test('in a call the box takes no text: nothing is sent, and it goes read-only', 
 
 test('the round button and Enter send only what is in the box; a suggested reply is its own bubble, sent with a tap', () => {
   const go = chat.slice(chat.indexOf('const go = '), chat.indexOf('const sendSug = '))
-  expect(go).toContain('const t = text.trim()')
+  // the box's words and its folded long pastes, nothing else
+  expect(go).toContain('const t = joined(text, pastes.map((p) => p.text))')
   expect(go).not.toMatch(/sug\.texts/)
-  expect(chat).toContain('const filled = !!text.trim() || !!files?.length')
+  expect(chat).toContain('const filled = !!text.trim() || !!files?.length || !!pastes.length')
   // no greyed suggestion in the box, no Tab chip
   expect(chat).toContain('placeholder={placeholder}')
   expect(chat).not.toContain('Use suggestion')
@@ -116,7 +117,7 @@ test('the round button and Enter send only what is in the box; a suggested reply
   expect(tap).toContain('send(key, key, t, false, true)')
   expect(tap).toContain('spent.add(sug.id)')
   expect(tap).not.toMatch(/setText|text\b(?!\))/)
-  expect(chat).toMatch(/className="sug"\s*onMouseDown=\{keepFocus\}/)
+  expect(chat).toMatch(/className=\{going \? 'sug go' : 'sug'\}\s*onMouseDown=\{keepFocus\}/)
   const edit = chat.slice(chat.indexOf('const editSug = '), chat.indexOf('const filled'))
   expect(edit).toContain('setText(t)')
   expect(edit).toContain('box.focus()')
@@ -143,15 +144,17 @@ test('the voice call button is gone from the header and the phone bottom bar; it
   expect(app).not.toMatch(/barEnd|barAbove|Talk to Shepherdr/)
 })
 
-test('the bubbles are one line of pills that scroll sideways, a long one truncating in its pill', () => {
+test('the bubbles are one line of pills that scroll sideways, a long one wrapping in its pill, never cut', () => {
   const css = read('../../src/ds.css')
   // the properties the row needs, in any order, so a restyle of the rest doesn't break it
   const sugs = css.match(/\.sugs\{([^}]*)\}/)![1].split(';')
   for (const x of ['display:flex', 'overflow-x:auto']) expect(sugs).toContain(x)
   expect(sugs).not.toContain('flex-wrap:wrap')
   const sug = css.match(/\.sug\{([^}]*)\}/)![1]
-  for (const x of ['flex:none', 'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis', 'user-select:none', '-webkit-touch-callout:none'])
+  for (const x of ['flex:none', 'overflow-wrap:anywhere', 'user-select:none', '-webkit-touch-callout:none'])
     expect(sug).toContain(x)
+  // SHEP-463: a tap sends the whole text, so a bubble shows all of it: no ellipsis, no one-line clamp
+  for (const x of ['text-overflow', 'white-space:nowrap', 'line-clamp']) expect(sug).not.toContain(x)
   expect(css).not.toContain('.kbd')
 })
 
@@ -161,7 +164,7 @@ test('a short reply ("1") gets a bubble at least the send button and a fingertip
   // one size, never under the send button, used for both sides so a one-character bubble is a circle
   const size = sug.find(x => x.startsWith('--sugh:'))!
   expect(size).toContain('var(--send)')
-  for (const x of ['min-width:var(--sugh)', 'height:var(--sugh)', 'text-align:center']) expect(sug).toContain(x)
+  for (const x of ['min-width:var(--sugh)', 'min-height:var(--sugh)', 'text-align:center']) expect(sug).toContain(x)
   // by touch, never under the app's touch target
   const tap = css.match(/\.app\.tap \.sug\{([^}]*)\}/)![1]
   expect(tap).toMatch(/--sugh:max\([^;]*var\(--hit\)/)
@@ -170,9 +173,10 @@ test('a short reply ("1") gets a bubble at least the send button and a fingertip
 
 test('every bubble looks the same: no filled first pick or other variant at rest', () => {
   const css = read('../../src/ds.css')
-  // only the bubble's own rule, the touch size, a mouse's hover and the keyboard's focus ring style a bubble
+  // only the bubble's own rule, the touch size, a mouse's hover and the keyboard's focus ring style a bubble; a press
+  // and a tapped one lifting away as it sends (SHEP-450) are not at rest
   const rules = [...css.matchAll(/([^{}]*\.sug\b[^{}]*)\{/g)].map((m) => m[1]!.trim().replace(/^.*\*\/\s*/s, ''))
-  for (const r of rules) expect(r).toMatch(/^(\.sug|\.app\.tap \.sug|\.sug:hover|\.sug:focus-visible)$/)
+  for (const r of rules) expect(r).toMatch(/^(\.sug|\.app\.tap \.sug|\.sug:hover|\.sug:focus-visible|\.sug:active|\.sug\.go)$/)
   // and the code gives each the same class
   const row = chat.slice(chat.indexOf('export function Replies('), chat.indexOf('export function pickOf('))
   expect(row).not.toMatch(/primary|'pri'/)
