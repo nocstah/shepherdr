@@ -5,6 +5,8 @@ import { commandMode, commandOf } from './command.ts'
 test('the box runs ! lines as commands only for agents that have a shell for them', () => {
   expect(commandMode('!ls', 'claude')).toBe('run')
   expect(commandMode('! git status', 'codex')).toBe('run')
+  // Antigravity's own `!` shell mode, opened by the service (service/agy-bang.ts)
+  expect(commandMode('!ls', 'antigravity')).toBe('run')
   expect(commandMode('!ls', 'gemini')).toBe('cant')
   // its agent not known yet (a chat still starting): the command goes
   expect(commandMode('!ls', undefined)).toBe('run')

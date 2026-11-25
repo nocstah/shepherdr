@@ -109,9 +109,6 @@ const stepRow = (s: any, i: number) => ({ key: `${s.id ?? i}`, kind: STEP[s.kind
 /** A tools row opened (GET api/activity?chat&what=turn&id): each step's line and what it printed, read from the log
  *  only now, as the window's open row (mods/chat loadResults). */
 export async function activity(reader: any, id: string): Promise<ActivityAnswer> {
-  // a `!` command sent to Antigravity from the chat (service/agy-bang.ts): what its screen showed it print
-  const bang = id.startsWith("bang:") ? bangsOf(String(reader?.addr ?? "")).find((b) => b.id === id) : null;
-  if (bang) return { steps: [{ id, kind: "run", tool: "run", at: 0, end: 1, title: `Ran ${bang.cmd}`, doing: `Ran ${bang.cmd}`, target: "", ...(bang.out !== undefined ? { out: bang.out || "(no output)" } : {}) }] } as ActivityAnswer;
   const x = (reader?.conv?.items ?? []).find((i: any) => i.id === id && i.kind === "tools");
   if (!x) return { error: "That turn isn't in the chat any more." };
   // (a call that only sent a message is that message's own row: not here)
@@ -764,12 +761,12 @@ export class Compat {
     }
     // what the agent asks now, as cards where they were asked (placeByTime below)
     const cardsFrom = messages.length;
-    // the `!` commands sent to Antigravity from here (agy writes none to its log: service/agy-bang.ts), each the
-    // person's message, then a row with what it printed, where they were sent; one its log has (SHELL_EXEC) shows once
+    // the `!` commands sent to Antigravity from here (agy writes none to its log: service/agy-bang.ts), each a command
+    // row as Claude Code's and Codex's, where they were sent: running until its screen showed what it printed (or the
+    // looking ended), then done (its screen shows no exit code). One its log has (SHELL_EXEC) shows once, as its own.
     for (const b of addr && reader.kind === "antigravity" ? bangsOf(addr) : []) {
-      if (items.some((x: any) => x.kind === "user" && x.at >= b.at - 60_000 && String(x.text ?? "").replace(/^!\s*/, "") === b.cmd)) continue;
-      messages.push({ id: `${b.id}:u`, who: "you", text: `!${b.cmd}`, at: b.at, ...(b.cid ? { cid: b.cid } : {}) } as Message);
-      messages.push({ id: b.id, who: "agent", at: b.at + 1, activity: { id: b.id, at: b.at, end: b.at, rows: [{ key: b.id, kind: "run", text: `Ran ${b.cmd}`, steps: [b.id] }], steps: 1, summary: "Ran a command" } });
+      if (items.some((x: any) => (x.kind === "command" || x.kind === "user") && x.at >= b.at - 60_000 && String(x.text ?? "").replace(/^!\s*/, "") === b.cmd)) continue;
+      messages.push({ id: b.id, who: "you", text: `!${b.cmd}`, at: b.at, ...(b.cid ? { cid: b.cid } : {}), command: { state: b.out !== undefined || b.read ? "done" : "running", ...(b.out ? { out: b.out } : {}) } } as Message);
     }
     for (const a of addr ? this.asks?.of(addr) ?? [] : []) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: this.question(a, key) });
     if (codexCard) messages.push({ id: `ask:cq:${codexCard.id}`, who: "agent", at: codexCard.at ?? Date.now(), question: codexQuestion(codexCard, key) });

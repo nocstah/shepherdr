@@ -81,6 +81,24 @@ test("a turn: the person's message, its reply, a command row with its output, it
   expect(c.open.size).toBe(0);
 });
 
+test("a `!` command its log keeps (SHELL_EXEC) is a command row, done or failed, with what it printed", async () => {
+  n = 0;
+  const shell = (command, more, status) => step("SHELL_EXEC", { command, ...more }, status, "USER_EXPLICIT");
+  const { c } = await read([
+    user("Hello"),
+    reply("Hi."),
+    // still running: LOG leaves it out until its end is written
+    shell("ls", {}, "RUNNING"),
+    shell("ls", { output: "a.txt\nb.txt\n" }, "DONE"),
+    shell("false", { error: "exit status 1" }, "ERROR"),
+  ]);
+  expect(kinds(c)).toEqual(["user", "agent", "command", "command"]);
+  expect(c.items[2]).toMatchObject({ kind: "command", text: "ls", state: "done", out: "a.txt\nb.txt" });
+  expect(c.items[3]).toMatchObject({ kind: "command", text: "false", state: "failed", out: "exit status 1" });
+  // the person's own run: no tools row, nothing it does now
+  expect(steps(c)).toEqual([]);
+});
+
 test("its question: asked, answered by a pick (none of the person's words), by several, written in, or skipped", async () => {
   n = 0;
   const ask = (q, options, multi = false) => call("ask_question", { questions: JSON.stringify([{ is_multi_select: multi, options, question: q }]) });

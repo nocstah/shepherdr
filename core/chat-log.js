@@ -1487,14 +1487,14 @@ export class Conversation {
         if (said.length) { this.waiting = false; this.push({ kind: "user", id: `ua${off}`, text: said.join("\n\n"), at, answer: true }); }
       }
     } else if (l.type === "SHELL_EXEC") {
-      // a `!` command the person ran in its terminal (a version that logs it): theirs, and its output under it
+      // a `!` command the person ran in its shell mode (a version that logs it): its command row, as Claude Code's and
+      // Codex's, with what it printed; failed when its line says ERROR or has an error
       const cmd = String(l.command ?? "").trim();
       if (!cmd) return;
-      this.user(`u${off}`, { text: `!${cmd}`, at });
-      const id = `x${off}`;
-      this.step(id, off, { kind: "run", line: `Ran ${clip(cmd, 80)}`, doing: `Running ${cmdWords(cmd)}` });
-      this.done(id, off);
-      this.doing = null;
+      const said = (v) => (typeof v === "string" && v.trim() ? v : "");
+      const err = said(l.error) || said(l.error_message);
+      const out = [said(l.output) || said(l.content), err].filter(Boolean).join("\n");
+      this.command({ cmd, out: cmdOut(out), state: l.status === "ERROR" || err ? "failed" : "done" }, off, at);
     } else if (l.type === "ERROR_MESSAGE") {
       const err = String(l.error ?? "").trim();
       if (err) this.push({ kind: "error", id: `e${off}`, text: err, at });

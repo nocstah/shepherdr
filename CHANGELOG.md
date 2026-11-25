@@ -18,6 +18,8 @@ Tasks and a space's chat can run on Antigravity, Google's agent, as well as on C
 - A space's chat can run on Antigravity: pick it from the chat's model button, before its first message or to switch
   a running one, or for every chat in Settings › Agents › Chats. It starts with its instructions and your settings,
   gets the news of its tasks and your settings' changes, and a restart goes back to its own conversation.
+- A line starting with `!` runs in Antigravity's own shell mode too, and shows as the same command row as Claude Code's
+  and Codex's, with what it printed.
 
 ## 3.2.18
 

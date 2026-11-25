@@ -1,10 +1,11 @@
-// A `!` command typed in the box: it runs in the agent's own shell, as in Claude Code (bash mode) and Codex, and its row
-// in the chat says what it printed and whether it ran fine. Other agents have no such shell: the box says so and offers
+// A `!` command typed in the box: it runs in the agent's own shell, as in Claude Code (bash mode), Codex and Antigravity
+// (its `!` shell mode, which the service opens for it: service/agy-bang.ts), and its row in the chat says what it
+// printed and whether it ran fine. Other agents have no such shell: the box says so and offers
 // your own terminal instead of sending the words as a message.
 import type { Message } from '@shared/types.ts'
 
 /** the agents whose box runs a `!` line as a shell command */
-export const RUNS_COMMANDS = new Set(['claude', 'codex'])
+export const RUNS_COMMANDS = new Set(['claude', 'codex', 'antigravity'])
 
 /** words that run as a command: they start with `!` and say more than that (core/send.js isCommand) */
 export const isCommand = (text: string | undefined) => /^\s*!/.test(text ?? '') && (text ?? '').trim().length > 1

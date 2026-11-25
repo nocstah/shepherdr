@@ -17,9 +17,10 @@ export function bangOf(text: string): string | null {
 const enc = (s: string) => new TextEncoder().encode(s);
 
 /** A `!` command sent from the chat. agy 1.5 writes none to its transcript, so the chat keeps them itself (the newest
- *  few per agent, while the service runs): the person's message (with the page's id), then a row with what it
- *  printed, read from its screen. A log that has it (SHELL_EXEC, a version that writes them) shows it instead. */
-export type Bang = { id: string; cid?: string; cmd: string; at: number; out?: string };
+ *  few per agent, while the service runs): its command row (with the page's id), with what it printed, read from its
+ *  screen; read: the looking ended, with or without output. A log that has it (SHELL_EXEC, a version that writes
+ *  them) shows it instead. */
+export type Bang = { id: string; cid?: string; cmd: string; at: number; out?: string; read?: boolean };
 const bangs = new Map<string, Bang[]>();
 let seq = 0;
 export const bangsOf = (addr: string): Bang[] => bangs.get(addr) ?? [];
@@ -29,14 +30,17 @@ export function noteBang(addr: string, cmd: string, at: number, cid?: string): B
   return b;
 }
 
-/** What it printed, read from its screen for a few seconds after it went in (none: it printed nothing yet). */
+/** What it printed, read from its screen for a few seconds after it went in; none by then: it printed nothing (or
+ *  runs on), and its row stops saying Running. */
 export async function readBang(hub: BangHub, addr: string, b: Bang, changed: () => void, o: { looks?: number; every?: number } = {}) {
   for (let i = 0; i < (o.looks ?? 20); i++) {
     await Bun.sleep(o.every ?? 500);
     const text = String((await hub.call<any>("terminal.read", { terminal: addr, lines: 0 }, 8000).catch(() => null))?.text ?? "");
     const out = AG.bangOutput(text, b.cmd);
-    if (out !== null) { b.out = out; changed(); return; }
+    if (out !== null) { b.out = out; b.read = true; changed(); return; }
   }
+  b.read = true;
+  changed();
 }
 
 /** Runs `cmd` in Antigravity's `!` mode in terminal `addr`. -> null when it went in, else why not, in words. */

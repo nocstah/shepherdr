@@ -5111,6 +5111,20 @@ class AssistantSettings(unittest.TestCase):
         self.aset.settings_pass({}, {})
         self.assertEqual(self.sent, [])
 
+    def test_an_antigravity_assistants_first_message_keeps_replies_to_30_characters(self):
+        """3.2.18 (#1478): a suggested reply is at most 30 characters. An Antigravity Assistant has no hook to tell it:
+        its first message is the template's words and then space_note's settings block (service/spaces.ts,
+        restart.sh), and both say so; no older 40-character wording is left in either."""
+        from herdr_task import templates
+        note = self.aset.space_note("sp1")
+        line = next(l for l in note.split("\n") if l.startswith("- Suggested replies: on"))
+        self.assertIn("each at most 30 characters", line)
+        with open(os.path.join(ROOT, "templates", "assistant.md")) as f:
+            words = f.read()
+        self.assertIn(templates.LIMIT_RULE, words)
+        for text in (note, words):
+            self.assertNotIn("about 40 characters", text)
+
     def test_a_running_assistant_is_told_once_what_changed_in_one_message(self):
         self.assistant()
         self.aset.session_note("t5")
